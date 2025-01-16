@@ -1,5 +1,6 @@
 ---
 title: unstable_createMemoryUploadHandler
+toc: false
 ---
 
 # `unstable_createMemoryUploadHandler`
@@ -7,9 +8,9 @@ title: unstable_createMemoryUploadHandler
 **Example:**
 
 ```tsx
-export const action: ActionFunction = async ({
+export const action = async ({
   request,
-}) => {
+}: ActionFunctionArgs) => {
   const uploadHandler = unstable_createMemoryUploadHandler({
     maxPartSize: 500_000,
   });

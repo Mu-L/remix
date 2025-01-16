@@ -1,10 +1,14 @@
+export type { ErrorResponse } from "@remix-run/router";
+
 export type {
   HandleDataRequestFunction,
   HandleDocumentRequestFunction,
+  HandleErrorFunction,
   ServerBuild,
   ServerEntryModule,
 } from "./build";
 
+export type { Future } from "./future";
 export type { UploadHandlerPart, UploadHandler } from "./formData";
 export type {
   MemoryUploadHandlerOptions,
@@ -21,7 +25,7 @@ export type {
 
 export type { SignFunction, UnsignFunction } from "./crypto";
 
-export type { AppLoadContext, AppData } from "./data";
+export type { AppLoadContext } from "./data";
 
 export type { EntryContext } from "./entry";
 
@@ -31,22 +35,20 @@ export type {
   PageLinkDescriptor,
 } from "./links";
 
-export type { TypedResponse } from "./responses";
+export type { TypedDeferredData, TypedResponse } from "./responses";
 
 export type {
-  ActionArgs,
   ActionFunction,
+  ActionFunctionArgs,
   DataFunctionArgs,
-  ErrorBoundaryComponent,
+  HeadersArgs,
   HeadersFunction,
-  HtmlMetaDescriptor,
   LinksFunction,
-  LoaderArgs,
   LoaderFunction,
-  MetaDescriptor,
-  MetaFunction,
-  RouteComponent,
-  RouteHandle,
+  LoaderFunctionArgs,
+  ServerRuntimeMetaArgs,
+  ServerRuntimeMetaDescriptor,
+  ServerRuntimeMetaFunction,
 } from "./routeModules";
 
 export type { SerializeFrom } from "./serialize";
@@ -58,4 +60,5 @@ export type {
   SessionData,
   SessionIdStorageStrategy,
   SessionStorage,
+  FlashSessionData,
 } from "./sessions";

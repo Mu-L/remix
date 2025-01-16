@@ -5,8 +5,8 @@ import crypto from "node:crypto";
 import { sync as spawnSync } from "cross-spawn";
 import PackageJson from "@npmcli/package-json";
 import jsonfile from "jsonfile";
-import fetch from "node-fetch";
 import retry from "fetch-retry";
+import { fetch } from "undici";
 
 let fetchRetry = retry(fetch);
 
@@ -49,13 +49,14 @@ export async function addCypress(directory, url) {
   await pkgJson.save();
 }
 
-export function getSpawnOpts(dir, env = {}) {
+export function getSpawnOpts(dir = __dirname, env = {}) {
   return {
     cwd: dir,
     stdio: "inherit",
     env: {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
+      NODE_ENV: "development",
       ...env,
     },
   };

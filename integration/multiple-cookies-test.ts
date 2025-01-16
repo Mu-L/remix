@@ -1,8 +1,12 @@
 import { test, expect } from "@playwright/test";
 
-import { createAppFixture, createFixture, js } from "./helpers/create-fixture";
-import type { AppFixture } from "./helpers/create-fixture";
-import { PlaywrightFixture } from "./helpers/playwright-fixture";
+import {
+  createAppFixture,
+  createFixture,
+  js,
+} from "./helpers/create-fixture.js";
+import type { AppFixture } from "./helpers/create-fixture.js";
+import { PlaywrightFixture } from "./helpers/playwright-fixture.js";
 
 test.describe("pathless layout routes", () => {
   let appFixture: AppFixture;
@@ -11,7 +15,7 @@ test.describe("pathless layout routes", () => {
     appFixture = await createAppFixture(
       await createFixture({
         files: {
-          "app/routes/index.jsx": js`
+          "app/routes/_index.tsx": js`
             import { redirect, json } from "@remix-run/node";
             import { Form, useActionData } from "@remix-run/react";
 
@@ -47,8 +51,8 @@ test.describe("pathless layout routes", () => {
     );
   });
 
-  test.afterAll(async () => {
-    await appFixture.close();
+  test.afterAll(() => {
+    appFixture.close();
   });
 
   test("should get multiple cookies from the loader", async ({ page }) => {

@@ -1,8 +1,12 @@
 import { test } from "@playwright/test";
 
-import { createAppFixture, createFixture, js } from "./helpers/create-fixture";
-import type { AppFixture } from "./helpers/create-fixture";
-import { PlaywrightFixture } from "./helpers/playwright-fixture";
+import {
+  createAppFixture,
+  createFixture,
+  js,
+} from "./helpers/create-fixture.js";
+import type { AppFixture } from "./helpers/create-fixture.js";
+import { PlaywrightFixture } from "./helpers/playwright-fixture.js";
 
 test.describe("pathless layout routes", () => {
   let appFixture: AppFixture;
@@ -11,23 +15,23 @@ test.describe("pathless layout routes", () => {
     appFixture = await createAppFixture(
       await createFixture({
         files: {
-          "app/routes/__layout.jsx": js`
+          "app/routes/_layout.tsx": js`
             import { Outlet } from "@remix-run/react";
 
             export default () => <div data-testid="layout-route"><Outlet /></div>;
           `,
-          "app/routes/__layout/index.jsx": js`
+          "app/routes/_layout._index.tsx": js`
             export default () => <div data-testid="layout-index">Layout index</div>;
           `,
-          "app/routes/__layout/subroute.jsx": js`
+          "app/routes/_layout.subroute.tsx": js`
             export default () => <div data-testid="layout-subroute">Layout subroute</div>;
           `,
-          "app/routes/sandwiches/__pathless.jsx": js`
+          "app/routes/sandwiches._pathless.tsx": js`
             import { Outlet } from "@remix-run/react";
 
             export default () => <div data-testid="sandwiches-pathless-route"><Outlet /></div>;
           `,
-          "app/routes/sandwiches/__pathless/index.jsx": js`
+          "app/routes/sandwiches._pathless._index.tsx": js`
             export default () => <div data-testid="sandwiches-pathless-index">Sandwiches pathless index</div>;
           `,
         },
@@ -35,8 +39,8 @@ test.describe("pathless layout routes", () => {
     );
   });
 
-  test.afterAll(async () => {
-    await appFixture.close();
+  test.afterAll(() => {
+    appFixture.close();
   });
 
   test("should render pathless index route", async ({ page }) => {

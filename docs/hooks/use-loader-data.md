@@ -4,9 +4,7 @@ title: useLoaderData
 
 # `useLoaderData`
 
-<docs-success>Watch the <a href="https://www.youtube.com/playlist?list=PLXoynULbYuEDG2wBFSZ66b85EIspy3fy6">📼 Remix Single</a>: <a href="https://www.youtube.com/watch?v=NXqEP_PsPNc&list=PLXoynULbYuEDG2wBFSZ66b85EIspy3fy6">Loading data into components</a></docs-success>
-
-This hook returns the JSON parsed data from your route loader function.
+Returns the serialized data from the closest route [`loader`][loader].
 
 ```tsx lines=[2,9]
 import { json } from "@remix-run/node"; // or cloudflare/deno
@@ -17,7 +15,24 @@ export async function loader() {
 }
 
 export default function Invoices() {
-  const invoices = useLoaderData();
+  const invoices = useLoaderData<typeof loader>();
   // ...
 }
 ```
+
+## Additional Resources
+
+**Discussions**
+
+- [Fullstack Data Flow][fullstack_data_flow]
+- [State Management][state_management]
+
+**API**
+
+- [`loader`][loader]
+- [`useFetcher`][use_fetcher]
+
+[loader]: ../route/loader
+[fullstack_data_flow]: ../discussion/data-flow
+[state_management]: ../discussion/state-management
+[use_fetcher]: ./use-fetcher

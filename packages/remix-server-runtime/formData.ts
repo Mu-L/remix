@@ -1,3 +1,4 @@
+// @ts-ignore
 import { streamMultipart } from "@web3-storage/multipart-parser";
 
 export type UploadHandlerPart = {
@@ -30,7 +31,7 @@ export function composeUploadHandlers(
  * Allows you to handle multipart forms (file uploads) for your app.
  *
  * TODO: Update this comment
- * @see https://remix.run/api/remix#parsemultipartformdata-node
+ * @see https://remix.run/utils/parse-multipart-form-data
  */
 export async function parseMultipartFormData(
   request: Request,

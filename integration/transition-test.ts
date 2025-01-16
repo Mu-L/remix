@@ -1,8 +1,12 @@
 import { test, expect } from "@playwright/test";
 
-import { createAppFixture, createFixture, js } from "./helpers/create-fixture";
-import type { Fixture, AppFixture } from "./helpers/create-fixture";
-import { PlaywrightFixture } from "./helpers/playwright-fixture";
+import {
+  createAppFixture,
+  createFixture,
+  js,
+} from "./helpers/create-fixture.js";
+import type { Fixture, AppFixture } from "./helpers/create-fixture.js";
+import { PlaywrightFixture } from "./helpers/playwright-fixture.js";
 
 test.describe("rendering", () => {
   let fixture: Fixture;
@@ -20,7 +24,7 @@ test.describe("rendering", () => {
   test.beforeAll(async () => {
     fixture = await createFixture({
       files: {
-        "app/root.jsx": js`
+        "app/root.tsx": js`
           import { Links, Meta, Outlet, Scripts } from "@remix-run/react";
 
           export default function Root() {
@@ -41,7 +45,7 @@ test.describe("rendering", () => {
           }
         `,
 
-        "app/routes/index.jsx": js`
+        "app/routes/_index.tsx": js`
           import { Link } from "@remix-run/react";
           export default function() {
             return (
@@ -73,7 +77,7 @@ test.describe("rendering", () => {
           }
         `,
 
-        [`app/routes/${PAGE}/index.jsx`]: js`
+        [`app/routes/${PAGE}._index.jsx`]: js`
           import { useLoaderData, Link } from "@remix-run/react";
 
           export function loader() {
@@ -91,7 +95,7 @@ test.describe("rendering", () => {
           }
         `,
 
-        [`app/routes/${PAGE}/${CHILD}.jsx`]: js`
+        [`app/routes/${PAGE}.${CHILD}.jsx`]: js`
           import { useLoaderData } from "@remix-run/react";
 
           export function loader() {
@@ -124,7 +128,7 @@ test.describe("rendering", () => {
           }
         `,
 
-        "app/routes/gh-1691.jsx": js`
+        "app/routes/gh-1691.tsx": js`
           import { json, redirect } from "@remix-run/node";
           import { useFetcher} from "@remix-run/react";
 
@@ -153,7 +157,7 @@ test.describe("rendering", () => {
           }
         `,
 
-        "app/routes/parent.jsx": js`
+        "app/routes/parent.tsx": js`
           import { Outlet, useLoaderData } from "@remix-run/react";
 
           if (!global.counts) {
@@ -180,7 +184,7 @@ test.describe("rendering", () => {
           }
         `,
 
-        "app/routes/parent/child.jsx": js`
+        "app/routes/parent.child.tsx": js`
           import { redirect } from "@remix-run/node";
           import { useFetcher} from "@remix-run/react";
 
@@ -204,8 +208,8 @@ test.describe("rendering", () => {
     appFixture = await createAppFixture(fixture);
   });
 
-  test.afterAll(async () => {
-    await appFixture.close();
+  test.afterAll(() => {
+    appFixture.close();
   });
 
   test("calls all loaders for new routes", async ({ page }) => {
@@ -219,7 +223,7 @@ test.describe("rendering", () => {
       responses
         .map((res) => new URL(res.url()).searchParams.get("_data"))
         .sort()
-    ).toEqual([`routes/${PAGE}`, `routes/${PAGE}/index`].sort());
+    ).toEqual([`routes/${PAGE}`, `routes/${PAGE}._index`].sort());
 
     await page.waitForSelector(`h2:has-text("${PAGE_TEXT}")`);
     await page.waitForSelector(`h3:has-text("${PAGE_INDEX_TEXT}")`);
@@ -234,7 +238,7 @@ test.describe("rendering", () => {
 
     expect(
       responses.map((res) => new URL(res.url()).searchParams.get("_data"))
-    ).toEqual([`routes/${PAGE}/${CHILD}`]);
+    ).toEqual([`routes/${PAGE}.${CHILD}`]);
 
     await page.waitForSelector(`h2:has-text("${PAGE_TEXT}")`);
     await page.waitForSelector(`h3:has-text("${CHILD_TEXT}")`);
@@ -255,7 +259,7 @@ test.describe("rendering", () => {
         .map((res) => new URL(res.url()).searchParams.get("_data"))
         .sort()
     ).toEqual(
-      [`routes/${REDIRECT}`, `routes/${PAGE}`, `routes/${PAGE}/index`].sort()
+      [`routes/${REDIRECT}`, `routes/${PAGE}`, `routes/${PAGE}._index`].sort()
     );
 
     await page.waitForSelector(`h2:has-text("${PAGE_TEXT}")`);
@@ -285,7 +289,7 @@ test.describe("rendering", () => {
 
     expect(
       responses.map((res) => new URL(res.url()).searchParams.get("_data"))
-    ).toEqual([`routes/${PAGE}/index`]);
+    ).toEqual([`routes/${PAGE}._index`]);
 
     await page.waitForSelector(`h2:has-text("${PAGE_TEXT}")`);
     await page.waitForSelector(`h3:has-text("${PAGE_INDEX_TEXT}")`);

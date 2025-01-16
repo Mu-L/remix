@@ -1,13 +1,8 @@
-import * as fs from "fs";
-import * as path from "path";
-import { ReadableStream } from "@remix-run/web-stream";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 import { NodeOnDiskFile } from "../upload/fileUploadHandler";
 import { readableStreamToString } from "../stream";
-
-beforeAll(() => {
-  global.ReadableStream = ReadableStream;
-});
 
 describe("NodeOnDiskFile", () => {
   let filepath = path.resolve(__dirname, "assets/test.txt");
@@ -103,5 +98,19 @@ describe("NodeOnDiskFile", () => {
     let slicedRes = contents.slice(0, 10000);
     expect(sliced.size).toBe(slicedRes.length);
     expect(await sliced.text()).toBe(slicedRes);
+  });
+
+  it("returns the file path properly", async () => {
+    expect(file.getFilePath()).toEqual(filepath);
+  });
+
+  it("removes the file properly", async () => {
+    let newFilePath = `${filepath}-copy`;
+    fs.copyFileSync(filepath, newFilePath);
+
+    let copiedFile = (file = new NodeOnDiskFile(newFilePath, "text/plain"));
+    expect(fs.existsSync(copiedFile.getFilePath())).toBe(true);
+    await copiedFile.remove();
+    expect(fs.existsSync(copiedFile.getFilePath())).toBe(false);
   });
 });

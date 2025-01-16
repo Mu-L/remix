@@ -1,21 +1,30 @@
 import exitHook from "exit-hook";
 import fse from "fs-extra";
-import path from "path";
+import path from "node:path";
 import prettyMs from "pretty-ms";
 import WebSocket from "ws";
 
-import { createChannel } from "../channel";
-import type { WatchOptions } from "../compiler";
 import { watch } from "../compiler";
 import type { RemixConfig } from "../config";
+import { createFileWatchCache } from "../compiler/fileWatchCache";
+import { logger } from "../tux";
 
 const relativePath = (file: string) => path.relative(process.cwd(), file);
 
+let clean = (config: RemixConfig) => {
+  try {
+    fse.emptyDirSync(config.assetsBuildDirectory);
+  } catch {
+    // ignore failed clean up attempts
+  }
+};
+
 export async function liveReload(
   config: RemixConfig,
-  options: WatchOptions = {}
+  options: { port: number; mode: string }
 ) {
-  let wss = new WebSocket.Server({ port: config.devServerPort });
+  clean(config);
+  let wss = new WebSocket.Server({ port: options.port });
   function broadcast(event: { type: string } & Record<string, unknown>) {
     setTimeout(() => {
       wss.clients.forEach((client) => {
@@ -23,7 +32,7 @@ export async function liveReload(
           client.send(JSON.stringify(event));
         }
       });
-    }, config.devServerBroadcastDelay);
+    }, 500);
   }
 
   function log(message: string) {
@@ -32,35 +41,50 @@ export async function liveReload(
     broadcast({ type: "LOG", message: _message });
   }
 
-  let dispose = await watch(config, {
-    mode: options.mode,
-    onInitialBuild: options.onInitialBuild,
-    onRebuildStart() {
-      log("Rebuilding...");
-    },
-    onRebuildFinish(durationMs: number) {
-      log(`Rebuilt in ${prettyMs(durationMs)}`);
-      broadcast({ type: "RELOAD" });
-    },
-    onFileCreated(file) {
-      log(`File created: ${relativePath(file)}`);
-    },
-    onFileChanged(file) {
-      log(`File changed: ${relativePath(file)}`);
-    },
-    onFileDeleted(file) {
-      log(`File deleted: ${relativePath(file)}`);
-    },
-  });
+  let fileWatchCache = createFileWatchCache();
 
-  let channel = createChannel<void>();
-  exitHook(async () => {
-    // cleanup when process exits e.g. user hits CTRL-C
+  let hasBuilt = false;
+  let dispose = await watch(
+    {
+      config,
+      options: {
+        mode: options.mode,
+        sourcemap: true,
+      },
+      fileWatchCache,
+      logger,
+    },
+    {
+      onBuildStart() {
+        clean(config);
+        log((hasBuilt ? "Rebuilding" : "Building") + "...");
+      },
+      onBuildFinish(_, durationMs: number, manifest) {
+        if (manifest === undefined) return;
+        hasBuilt = true;
+        log((hasBuilt ? "Rebuilt" : "Built") + ` in ${prettyMs(durationMs)}`);
+        broadcast({ type: "RELOAD" });
+      },
+      onFileCreated(file) {
+        log(`File created: ${relativePath(file)}`);
+      },
+      onFileChanged(file) {
+        log(`File changed: ${relativePath(file)}`);
+        fileWatchCache.invalidateFile(file);
+      },
+      onFileDeleted(file) {
+        log(`File deleted: ${relativePath(file)}`);
+        fileWatchCache.invalidateFile(file);
+      },
+    }
+  );
+
+  let heartbeat = setInterval(broadcast, 60000, { type: "PING" });
+
+  exitHook(() => clean(config));
+  return async () => {
     wss.close();
+    clearInterval(heartbeat);
     await dispose();
-    fse.emptyDirSync(config.assetsBuildDirectory);
-    fse.rmSync(config.serverBuildPath);
-    channel.write();
-  });
-  return channel.read();
+  };
 }

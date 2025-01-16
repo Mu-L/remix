@@ -1,9 +1,9 @@
-import path from "path";
+import path from "node:path";
 
 import type { RemixConfig } from "../config";
 import { readConfig } from "../config";
 
-const remixRoot = path.resolve(__dirname, "./fixtures/stack");
+const remixRoot = path.join(__dirname, "fixtures", "stack");
 
 describe("readConfig", () => {
   let config: RemixConfig;
@@ -17,55 +17,64 @@ describe("readConfig", () => {
         rootDirectory: expect.any(String),
         appDirectory: expect.any(String),
         cacheDirectory: expect.any(String),
-        devServerPort: expect.any(Number),
         serverBuildPath: expect.any(String),
         assetsBuildDirectory: expect.any(String),
         relativeAssetsBuildDirectory: expect.any(String),
+        entryClientFilePath: expect.any(String),
+        entryServerFilePath: expect.any(String),
         tsconfigPath: expect.any(String),
-        future: {
-          v2_meta: expect.any(Boolean),
-        },
       },
       `
-      Object {
+      {
         "appDirectory": Any<String>,
         "assetsBuildDirectory": Any<String>,
+        "browserNodeBuiltinsPolyfill": undefined,
         "cacheDirectory": Any<String>,
-        "devServerBroadcastDelay": 0,
-        "devServerPort": Any<Number>,
+        "dev": {},
         "entryClientFile": "entry.client.tsx",
+        "entryClientFilePath": Any<String>,
         "entryServerFile": "entry.server.tsx",
-        "future": Object {
-          "v2_meta": Any<Boolean>,
+        "entryServerFilePath": Any<String>,
+        "future": {
+          "unstable_optimizeDeps": false,
+          "v3_fetcherPersist": false,
+          "v3_lazyRouteDiscovery": false,
+          "v3_relativeSplatPath": false,
+          "v3_routeConfig": false,
+          "v3_singleFetch": false,
+          "v3_throwAbortReason": false,
         },
         "mdx": undefined,
+        "postcss": true,
         "publicPath": "/build/",
         "relativeAssetsBuildDirectory": Any<String>,
         "rootDirectory": Any<String>,
-        "routes": Object {
-          "root": Object {
+        "routes": {
+          "root": {
             "file": "root.tsx",
             "id": "root",
             "path": "",
           },
         },
         "serverBuildPath": Any<String>,
-        "serverBuildTarget": undefined,
-        "serverBuildTargetEntryModule": "export * from \\"@remix-run/dev/server-build\\";",
-        "serverDependenciesToBundle": Array [],
+        "serverBuildTargetEntryModule": "export * from "@remix-run/dev/server-build";",
+        "serverConditions": undefined,
+        "serverDependenciesToBundle": [],
         "serverEntryPoint": undefined,
+        "serverMainFields": [
+          "module",
+          "main",
+        ],
+        "serverMinify": false,
         "serverMode": "production",
-        "serverModuleFormat": "cjs",
+        "serverModuleFormat": "esm",
+        "serverNodeBuiltinsPolyfill": undefined,
         "serverPlatform": "node",
+        "tailwind": true,
         "tsconfigPath": Any<String>,
-        "watchPaths": Array [],
+        "watchPaths": [],
       }
     `
     );
-  });
-
-  it("returns the same devServerPort value across reloads", async () => {
-    let newConfig = await readConfig(remixRoot);
-    expect(newConfig.devServerPort).toBe(config.devServerPort);
   });
 });

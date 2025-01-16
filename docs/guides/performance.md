@@ -36,17 +36,29 @@ But this is just one approach that we wanted to explore.
 
 Cloudflare has been pushing the boundaries of edge computing for a while now and Remix is positioned to take full advantage of it. You can see our demo's response times are the same as serving static files but the features it demonstrates are definitely not static!
 
-Not only does Cloudflare run the app close to the user, they also have persistent storage systems like [KV][kv] and [Durable Objects][durable-objects] to allow SSG-level speed without the handcuffs of coupling data to deploys and bespoke incremental builder backends.
+Not only does Cloudflare run the app close to the user, they also have persistent storage systems like [KV][kv] and [Durable Objects][durable-objects] to allow SSG-level speed without the handcuffs of coupling data to deploys and bespoke, incremental-builder backends.
 
 There are other similar platforms that we've got plans to support soon.
+
+## Bundle analysis
+
+<docs-warning>This documentation is only relevant when using the [Classic Remix Compiler][classic-remix-compiler]</docs-warning>
+
+Remix outputs metafiles to the server build directory (`build/` by default) so you can analyze your bundle size and composition.
+
+- `metafile.css.json` : Metafile for the CSS bundle
+- `metafile.js.json` : Metafile for the browser JS bundle
+- `metafile.server.json` : Metafile for the serve JS bundle
+
+Remix uses esbuild's metafile format so you can directly upload those files to [https://esbuild.github.io/analyze/][https-esbuild-github-io-analyze] to visualize your bundle.
 
 ## Other Technologies
 
 Here are some other technologies to help speed up your servers:
 
-- [FaunaDB][fauna-db] - a distributed database that runs close to your users
-- [LRU Cache][lru-cache] - in memory cache that automatically clears out more space when it gets full
-- [Redis][redis] - tried and true server-side cache
+- [FaunaDB][fauna-db] - A distributed database that runs close to your users
+- [LRU Cache][lru-cache] - An in-memory cache that automatically clears out more space when it gets full
+- [Redis][redis] - A tried and true server-side cache
 
 [unpkg-com]: https://unpkg.com
 [fly]: https://fly.io
@@ -56,3 +68,5 @@ Here are some other technologies to help speed up your servers:
 [fauna-db]: https://fauna.com
 [lru-cache]: https://www.npmjs.com/package/lru-cache
 [redis]: https://www.npmjs.com/package/redis
+[https-esbuild-github-io-analyze]: https://esbuild.github.io/analyze
+[classic-remix-compiler]: ./vite#classic-remix-compiler-vs-remix-vite

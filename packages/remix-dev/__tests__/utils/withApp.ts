@@ -1,5 +1,5 @@
-import os from "os";
-import path from "path";
+import os from "node:os";
+import path from "node:path";
 import fse from "fs-extra";
 
 const retry = async (
@@ -9,7 +9,7 @@ const retry = async (
 ) => {
   try {
     await callback();
-  } catch (error) {
+  } catch (error: unknown) {
     if (times === 0) throw error;
     setTimeout(() => retry(callback, times - 1), delayMs);
   }
@@ -36,6 +36,6 @@ export default async <Result>(
     // errors when attempting to removing the temporary directory.
     // Retrying a couple times seems to get it to succeed.
     // See https://github.com/jprichardson/node-fs-extra/issues?q=EBUSY%3A+resource+busy+or+locked%2C+rmdir
-    retry(async () => await fse.remove(TEMP_DIR), 3, 200);
+    await retry(async () => await fse.remove(TEMP_DIR), 3, 200);
   }
 };

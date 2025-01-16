@@ -5,9 +5,9 @@ import {
   createFixture,
   js,
   json,
-} from "./helpers/create-fixture";
-import type { Fixture, AppFixture } from "./helpers/create-fixture";
-import { PlaywrightFixture } from "./helpers/playwright-fixture";
+} from "./helpers/create-fixture.js";
+import type { Fixture, AppFixture } from "./helpers/create-fixture.js";
+import { PlaywrightFixture } from "./helpers/playwright-fixture.js";
 
 let fixture: Fixture;
 let appFixture: AppFixture;
@@ -20,12 +20,14 @@ test.beforeAll(async () => {
         version: "1.0.0",
         main: "index.js",
       }),
+
       "node_modules/has-side-effects/index.js": js`
         let message;
         (() => { message = process.env.___SOMETHING___ || "hello, world"; })();
         module.exports = () => message;
       `,
-      "app/routes/index.jsx": js`
+
+      "app/routes/_index.tsx": js`
         import { json } from "@remix-run/node";
         import { useLoaderData, Link } from "@remix-run/react";
         import sideEffectModules from "has-side-effects";
@@ -49,7 +51,9 @@ test.beforeAll(async () => {
   appFixture = await createAppFixture(fixture);
 });
 
-test.afterAll(() => appFixture.close());
+test.afterAll(() => {
+  appFixture.close();
+});
 
 test.skip("should log relevant error message", async ({ page }) => {
   let app = new PlaywrightFixture(appFixture, page);

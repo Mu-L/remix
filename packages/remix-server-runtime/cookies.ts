@@ -30,7 +30,7 @@ export type CookieOptions = CookieParseOptions &
  * `serialize()` methods that allow a single instance to be reused for
  * parsing/encoding multiple different values.
  *
- * @see https://remix.run/api/remix#cookie-api
+ * @see https://remix.run/utils/cookies#cookie-api
  */
 export interface Cookie {
   /**
@@ -75,7 +75,7 @@ export type CreateCookieFunction = (
 /**
  * Creates a logical container for managing a browser cookie from the server.
  *
- * @see https://remix.run/api/remix#createcookie
+ * @see https://remix.run/utils/cookies#createcookie
  */
 export const createCookieFactory =
   ({
@@ -86,8 +86,7 @@ export const createCookieFactory =
     unsign: UnsignFunction;
   }): CreateCookieFunction =>
   (name, cookieOptions = {}) => {
-    let { secrets, ...options } = {
-      secrets: [],
+    let { secrets = [], ...options } = {
       path: "/",
       sameSite: "lax" as const,
       ...cookieOptions,
@@ -135,7 +134,7 @@ export type IsCookieFunction = (object: any) => object is Cookie;
 /**
  * Returns true if an object is a Remix cookie container.
  *
- * @see https://remix.run/api/remix#iscookie
+ * @see https://remix.run/utils/cookies#iscookie
  */
 export const isCookie: IsCookieFunction = (object): object is Cookie => {
   return (
@@ -187,7 +186,7 @@ function encodeData(value: any): string {
 function decodeData(value: string): any {
   try {
     return JSON.parse(decodeURIComponent(myEscape(atob(value))));
-  } catch (error) {
+  } catch (error: unknown) {
     return {};
   }
 }

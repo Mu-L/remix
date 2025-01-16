@@ -5,9 +5,10 @@ import {
   createFixture,
   js,
   mdx,
-} from "./helpers/create-fixture";
-import type { Fixture, AppFixture } from "./helpers/create-fixture";
-import { PlaywrightFixture } from "./helpers/playwright-fixture";
+  css,
+} from "./helpers/create-fixture.js";
+import type { Fixture, AppFixture } from "./helpers/create-fixture.js";
+import { PlaywrightFixture } from "./helpers/playwright-fixture.js";
 
 test.describe("mdx", () => {
   let fixture: Fixture;
@@ -16,8 +17,8 @@ test.describe("mdx", () => {
   test.beforeAll(async () => {
     fixture = await createFixture({
       files: {
-        "app/root.jsx": js`
-        import { Links, Meta, Outlet, Scripts } from "@remix-run/react";
+        "app/root.tsx": js`
+          import { Links, Meta, Outlet, Scripts } from "@remix-run/react";
 
           export default function Root() {
             return (
@@ -35,7 +36,7 @@ test.describe("mdx", () => {
           }
         `,
 
-        "app/routes/blog.jsx": js`
+        "app/routes/blog.tsx": js`
           import { useMatches, Outlet } from "@remix-run/react";
 
           export default function Blog() {
@@ -51,21 +52,22 @@ test.describe("mdx", () => {
           }
         `,
 
-        "app/routes/blog/post.mdx": mdx`---
+        "app/routes/blog.post.mdx": mdx`---
 meta:
-  title: My First Post
-  description: Isn't this awesome?
+- title: My First Post
+- name: description
+  content: Isn't this awesome?
+handle:
+  someData: abc
 headers:
   Cache-Control: no-cache
 ---
 
-export const links = () => [
-  { rel: "stylesheet", href: "app.css" }
-]
+import stylesheetHref from "../app.css"
 
-export const handle = {
-  someData: "abc"
-}
+export const links = () => [
+  { rel: "stylesheet", href: stylesheetHref }
+]
 
 import { useLoaderData } from '@remix-run/react';
 
@@ -87,13 +89,20 @@ export function ComponentUsingData() {
         "app/routes/basic.mdx": mdx`
 # This is some basic markdown!
         `.trim(),
+
+        "app/app.css": css`
+          body {
+            background-color: #eee;
+            color: #000;
+          }
+        `,
       },
     });
     appFixture = await createAppFixture(fixture);
   });
 
-  test.afterAll(async () => {
-    await appFixture.close();
+  test.afterAll(() => {
+    appFixture.close();
   });
 
   test("can render basic markdown", async ({ page }) => {
@@ -114,6 +123,8 @@ export function ComponentUsingData() {
     expect(await app.getHtml("title")).toMatch("My First Post");
     expect(await app.getHtml("#loader")).toMatch(/Mambo Number:.+5/s);
     expect(await app.getHtml("#handle")).toMatch("abc");
-    expect(await app.getHtml('link[rel="stylesheet"]')).toMatch("app.css");
+    expect(await app.getHtml('link[rel="stylesheet"]')).toMatch(
+      /app-[\dA-Z]+\.css/
+    );
   });
 });

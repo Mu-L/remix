@@ -1,17 +1,33 @@
-import * as path from "path";
+import * as path from "node:path";
+import * as url from "node:url";
 import { test, expect } from "@playwright/test";
 
-import { PlaywrightFixture } from "./helpers/playwright-fixture";
-import type { Fixture, AppFixture } from "./helpers/create-fixture";
-import { createAppFixture, createFixture, js } from "./helpers/create-fixture";
+import { PlaywrightFixture } from "./helpers/playwright-fixture.js";
+import type { Fixture, AppFixture } from "./helpers/create-fixture.js";
+import {
+  createAppFixture,
+  createFixture,
+  js,
+} from "./helpers/create-fixture.js";
 
 let fixture: Fixture;
 let appFixture: AppFixture;
 
+const __dirname = url.fileURLToPath(new URL(".", import.meta.url));
+
 test.beforeAll(async () => {
   fixture = await createFixture({
+    config: {
+      browserNodeBuiltinsPolyfill: {
+        modules: {
+          url: true,
+        },
+      },
+    },
     files: {
-      "app/routes/file-upload-handler.jsx": js`
+      "app/routes/file-upload-handler.tsx": js`
+        import * as path from "node:path";
+        import * as url from "node:url";
         import {
           json,
           unstable_composeUploadHandlers as composeUploadHandlers,
@@ -22,10 +38,11 @@ test.beforeAll(async () => {
         } from "@remix-run/node";
         import { Form, useActionData } from "@remix-run/react";
 
+        const __dirname = url.fileURLToPath(new URL(".", import.meta.url));
         export let action = async ({ request }) => {
           let uploadHandler = composeUploadHandlers(
             createFileUploadHandler({
-              directory: "./uploads",
+              directory: path.resolve(__dirname, "..", "uploads"),
               maxPartSize: 13,
               avoidFileConflicts: false,
               file: ({ filename }) => filename,
@@ -74,7 +91,7 @@ test.beforeAll(async () => {
         }
       `,
 
-      "app/routes/memory-upload-handler.jsx": js`
+      "app/routes/memory-upload-handler.tsx": js`
         import {
           json,
           unstable_createMemoryUploadHandler as createMemoryUploadHandler,
@@ -129,7 +146,7 @@ test.beforeAll(async () => {
         }
       `,
 
-      "app/routes/passthrough-upload-handler.jsx": js`
+      "app/routes/passthrough-upload-handler.tsx": js`
         import {
           json,
           unstable_parseMultipartFormData as parseMultipartFormData,
@@ -175,13 +192,16 @@ test.beforeAll(async () => {
   appFixture = await createAppFixture(fixture);
 });
 
-test.afterAll(() => appFixture.close());
+test.afterAll(() => {
+  appFixture.close();
+});
 
 test("can upload a file with createFileUploadHandler", async ({ page }) => {
   let app = new PlaywrightFixture(appFixture, page);
   await app.goto("/file-upload-handler");
   await app.uploadFile("#file", path.resolve(__dirname, "assets/toupload.txt"));
   await app.clickSubmitButton("/file-upload-handler");
+  await page.waitForSelector("#message");
 
   expect(await app.getHtml("#message")).toMatch(">SUCCESS<");
   expect(await app.getHtml("#size")).toMatch(">13<");
@@ -198,6 +218,7 @@ test("can catch MaxPartSizeExceededError when file is too big with createFileUpl
     path.resolve(__dirname, "assets/touploadtoobig.txt")
   );
   await app.clickSubmitButton("/file-upload-handler");
+  await page.waitForSelector("#message");
 
   expect(await app.getHtml("#message")).toMatch(">FILE_TOO_LARGE<");
   expect(await app.getHtml("#size")).toMatch(">13<");
@@ -208,6 +229,7 @@ test("can upload a file with createMemoryUploadHandler", async ({ page }) => {
   await app.goto("/memory-upload-handler");
   await app.uploadFile("#file", path.resolve(__dirname, "assets/toupload.txt"));
   await app.clickSubmitButton("/memory-upload-handler");
+  await page.waitForSelector("#message");
 
   expect(await app.getHtml("#message")).toMatch(">SUCCESS<");
   expect(await app.getHtml("#size")).toMatch(">13<");
@@ -218,6 +240,7 @@ test("can upload a file with a passthrough handler", async ({ page }) => {
   await app.goto("/passthrough-upload-handler");
   await app.uploadFile("#file", path.resolve(__dirname, "assets/toupload.txt"));
   await app.clickSubmitButton("/passthrough-upload-handler");
+  await page.waitForSelector("#message");
 
   expect(await app.getHtml("#message")).toMatch(">SUCCESS<");
 });
@@ -232,6 +255,7 @@ test("can catch MaxPartSizeExceededError when file is too big with createMemoryU
     path.resolve(__dirname, "assets/touploadtoobig.txt")
   );
   await app.clickSubmitButton("/memory-upload-handler");
+  await page.waitForSelector("#message");
 
   expect(await app.getHtml("#message")).toMatch(">FILE_TOO_LARGE<");
   expect(await app.getHtml("#size")).toMatch(">13<");
@@ -247,8 +271,8 @@ test.describe("without javascript", () => {
       "#file",
       path.resolve(__dirname, "assets/toupload.txt")
     );
-
-    await Promise.all([page.click("#submit"), page.waitForNavigation()]);
+    await page.click("#submit");
+    await page.waitForSelector("#message");
 
     expect(await app.getHtml("#message")).toMatch(">SUCCESS<");
     expect(await app.getHtml("#size")).toMatch(">13<");
@@ -263,8 +287,8 @@ test.describe("without javascript", () => {
       "#file",
       path.resolve(__dirname, "assets/touploadtoobig.txt")
     );
-
-    await Promise.all([page.click("#submit"), page.waitForNavigation()]);
+    await page.click("#submit");
+    await page.waitForSelector("#message");
 
     expect(await app.getHtml("#message")).toMatch(">FILE_TOO_LARGE<");
     expect(await app.getHtml("#size")).toMatch(">13<");
@@ -277,8 +301,8 @@ test.describe("without javascript", () => {
       "#file",
       path.resolve(__dirname, "assets/toupload.txt")
     );
-
-    await Promise.all([page.click("#submit"), page.waitForNavigation()]);
+    await page.click("#submit");
+    await page.waitForSelector("#message");
 
     expect(await app.getHtml("#message")).toMatch(">SUCCESS<");
     expect(await app.getHtml("#size")).toMatch(">13<");
@@ -291,8 +315,8 @@ test.describe("without javascript", () => {
       "#file",
       path.resolve(__dirname, "assets/toupload.txt")
     );
-
-    await Promise.all([page.click("#submit"), page.waitForNavigation()]);
+    await page.click("#submit");
+    await page.waitForSelector("#message");
 
     expect(await app.getHtml("#message")).toMatch(">SUCCESS<");
   });
@@ -306,8 +330,8 @@ test.describe("without javascript", () => {
       "#file",
       path.resolve(__dirname, "assets/touploadtoobig.txt")
     );
-
-    await Promise.all([page.click("#submit"), page.waitForNavigation()]);
+    await page.click("#submit");
+    await page.waitForSelector("#message");
 
     expect(await app.getHtml("#message")).toMatch(">FILE_TOO_LARGE<");
     expect(await app.getHtml("#size")).toMatch(">13<");

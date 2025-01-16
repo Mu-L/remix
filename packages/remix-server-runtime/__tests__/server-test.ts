@@ -1,9 +1,9 @@
+import type { StaticHandlerContext } from "@remix-run/router";
+
 import { createRequestHandler } from "..";
 import { ServerMode } from "../mode";
 import type { ServerBuild } from "../build";
 import { mockServerBuild } from "./utils";
-
-const DATA_CALL_MULTIPIER = 1;
 
 function spyConsole() {
   // https://github.com/facebook/react/issues/7047
@@ -26,7 +26,7 @@ describe("server", () => {
     entry: {
       module: {
         default: async (request) => {
-          return new Response(`${request.method}, ${request.url}`);
+          return new Response(`${request.method}, ${request.url} COMPONENT`);
         },
       },
     },
@@ -35,8 +35,10 @@ describe("server", () => {
         id: routeId,
         path: "",
         module: {
-          action: () => "ACTION",
-          loader: () => "LOADER",
+          action: ({ request }) =>
+            new Response(`${request.method} ${request.url} ACTION`),
+          loader: ({ request }) =>
+            new Response(`${request.method} ${request.url} LOADER`),
           default: () => "COMPONENT",
         },
       },
@@ -53,23 +55,31 @@ describe("server", () => {
         },
       },
     },
+    future: {},
   } as unknown as ServerBuild;
 
   describe("createRequestHandler", () => {
+    let spy = spyConsole();
+
+    beforeEach(() => {
+      spy.console.mockClear();
+    });
+
     let allowThrough = [
       ["GET", "/"],
-      ["GET", "/_data=root"],
+      ["GET", "/?_data=root"],
       ["POST", "/"],
-      ["POST", "/_data=root"],
+      ["POST", "/?_data=root"],
       ["PUT", "/"],
-      ["PUT", "/_data=root"],
+      ["PUT", "/?_data=root"],
       ["DELETE", "/"],
-      ["DELETE", "/_data=root"],
+      ["DELETE", "/?_data=root"],
       ["PATCH", "/"],
-      ["PATCH", "/_data=root"],
+      ["PATCH", "/?_data=root"],
     ];
-    for (let [method, to] of allowThrough) {
-      it(`allows through ${method} request to ${to}`, async () => {
+    it.each(allowThrough)(
+      `allows through %s request to %s`,
+      async (method, to) => {
         let handler = createRequestHandler(build);
         let response = await handler(
           new Request(`http://localhost:3000${to}`, {
@@ -77,9 +87,18 @@ describe("server", () => {
           })
         );
 
-        expect(await response.text()).toContain(method);
-      });
-    }
+        expect(response.status).toBe(200);
+        let text = await response.text();
+        expect(text).toContain(method);
+        let expected = !to.includes("?_data=root")
+          ? "COMPONENT"
+          : method === "GET"
+          ? "LOADER"
+          : "ACTION";
+        expect(text).toContain(expected);
+        expect(spy.console).not.toHaveBeenCalled();
+      }
+    );
 
     it("strips body for HEAD requests", async () => {
       let handler = createRequestHandler(build);
@@ -131,7 +150,49 @@ describe("shared server runtime", () => {
       expect(result.status).toBe(200);
       expect(await result.json()).toBe("resource");
       expect(rootLoader.mock.calls.length).toBe(0);
-      expect(resourceLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(resourceLoader.mock.calls.length).toBe(1);
+    });
+
+    test("calls resource route loader throwing response with immutable headers", async () => {
+      let build = mockServerBuild({
+        root: {
+          default: {},
+        },
+        "routes/resource": {
+          parentId: "root",
+          path: "resource",
+          loader() {
+            let headers = new Headers({ "x-test": "yes" });
+            let headersProxy = new Proxy(headers, {
+              get(target, prop, receiver) {
+                if (prop === "set") {
+                  throw new TypeError("immutable");
+                }
+                return Reflect.get(target, prop, receiver);
+              },
+            });
+            // Mock a "response" that will pass the `isResponse` check
+            throw {
+              status: 400,
+              statusText: "Bad Request",
+              headers: headersProxy,
+              body: "text",
+              text: () => Promise.resolve("text"),
+            };
+          },
+        },
+      });
+      let handler = createRequestHandler(build, ServerMode.Development);
+
+      let request = new Request(`${baseUrl}/resource`, {
+        method: "get",
+      });
+
+      let result = await handler(request);
+      expect(result.status).toBe(400);
+      expect(result.headers.get("x-test")).toBe("yes");
+      expect(result.headers.get("X-Remix-Catch")).toBe("yes");
+      expect(await result.text()).toBe("text");
     });
 
     test("calls sub resource route loader", async () => {
@@ -169,7 +230,7 @@ describe("shared server runtime", () => {
       expect(await result.json()).toBe("sub");
       expect(rootLoader.mock.calls.length).toBe(0);
       expect(resourceLoader.mock.calls.length).toBe(0);
-      expect(subResourceLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(subResourceLoader.mock.calls.length).toBe(1);
     });
 
     test("resource route loader allows thrown responses", async () => {
@@ -199,7 +260,7 @@ describe("shared server runtime", () => {
       expect(result.status).toBe(200);
       expect(await result.text()).toBe("resource");
       expect(rootLoader.mock.calls.length).toBe(0);
-      expect(resourceLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(resourceLoader.mock.calls.length).toBe(1);
     });
 
     test("resource route loader responds with generic error when thrown", async () => {
@@ -244,7 +305,7 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect((await result.text()).includes(error.message)).toBe(true);
-      expect(spy.console.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(spy.console.mock.calls.length).toBe(1);
     });
 
     test("calls resource route action", async () => {
@@ -274,7 +335,7 @@ describe("shared server runtime", () => {
       expect(result.status).toBe(200);
       expect(await result.json()).toBe("resource");
       expect(rootAction.mock.calls.length).toBe(0);
-      expect(resourceAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(resourceAction.mock.calls.length).toBe(1);
     });
 
     test("calls sub resource route action", async () => {
@@ -312,7 +373,7 @@ describe("shared server runtime", () => {
       expect(await result.json()).toBe("sub");
       expect(rootAction.mock.calls.length).toBe(0);
       expect(resourceAction.mock.calls.length).toBe(0);
-      expect(subResourceAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(subResourceAction.mock.calls.length).toBe(1);
     });
 
     test("resource route action allows thrown responses", async () => {
@@ -342,7 +403,7 @@ describe("shared server runtime", () => {
       expect(result.status).toBe(200);
       expect(await result.text()).toBe("resource");
       expect(rootAction.mock.calls.length).toBe(0);
-      expect(resourceAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(resourceAction.mock.calls.length).toBe(1);
     });
 
     test("resource route action responds with generic error when thrown", async () => {
@@ -387,29 +448,177 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect((await result.text()).includes(message)).toBe(true);
-      expect(spy.console.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(spy.console.mock.calls.length).toBe(1);
+    });
+
+    test("aborts request", async () => {
+      let rootLoader = jest.fn(() => {
+        return "root";
+      });
+      let resourceLoader = jest.fn(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        return "resource";
+      });
+      let build = mockServerBuild({
+        root: {
+          default: {},
+          loader: rootLoader,
+        },
+        "routes/resource": {
+          loader: resourceLoader,
+          path: "resource",
+        },
+      });
+      let handler = createRequestHandler(build, ServerMode.Test);
+
+      let controller = new AbortController();
+      let request = new Request(`${baseUrl}/resource`, {
+        method: "get",
+        signal: controller.signal,
+      });
+
+      let resultPromise = handler(request);
+      controller.abort();
+      let result = await resultPromise;
+      expect(result.status).toBe(500);
+      expect(await result.text()).toMatchInlineSnapshot(`
+        "Unexpected Server Error
+
+        Error: queryRoute() call aborted: GET http://test.com/resource"
+      `);
+    });
+
+    test("aborts request (v3_throwAbortReason)", async () => {
+      let rootLoader = jest.fn(() => {
+        return "root";
+      });
+      let resourceLoader = jest.fn(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        return "resource";
+      });
+      let handleErrorSpy = jest.fn();
+      let build = mockServerBuild(
+        {
+          root: {
+            default: {},
+            loader: rootLoader,
+          },
+          "routes/resource": {
+            loader: resourceLoader,
+            path: "resource",
+          },
+        },
+        {
+          future: {
+            v3_throwAbortReason: true,
+          },
+          handleError: handleErrorSpy,
+        }
+      );
+      let handler = createRequestHandler(build, ServerMode.Test);
+
+      let controller = new AbortController();
+      let request = new Request(`${baseUrl}/resource`, {
+        method: "get",
+        signal: controller.signal,
+      });
+
+      let resultPromise = handler(request);
+      controller.abort();
+      let result = await resultPromise;
+      expect(result.status).toBe(500);
+      expect(await result.text()).toMatchInlineSnapshot(`
+        "Unexpected Server Error
+
+        AbortError: This operation was aborted"
+      `);
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy.mock.calls[0][0] instanceof DOMException).toBe(
+        true
+      );
+      expect(handleErrorSpy.mock.calls[0][0].name).toBe("AbortError");
+      expect(handleErrorSpy.mock.calls[0][0].message).toBe(
+        "This operation was aborted"
+      );
+      expect(handleErrorSpy.mock.calls[0][1].request.method).toBe("GET");
+      expect(handleErrorSpy.mock.calls[0][1].request.url).toBe(
+        "http://test.com/resource"
+      );
     });
   });
 
   describe("data requests", () => {
-    test("data request that does not match loader surfaces error for boundary", async () => {
+    test("data request that does not match loader surfaces 400 error for boundary", async () => {
       let build = mockServerBuild({
         root: {
           default: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           index: true,
         },
       });
       let handler = createRequestHandler(build, ServerMode.Test);
 
-      let request = new Request(`${baseUrl}/?_data=routes/index`, {
+      let request = new Request(`${baseUrl}/?_data=routes/_index`, {
         method: "get",
       });
 
       let result = await handler(request);
       expect(result.status).toBe(400);
+      expect(result.headers.get("X-Remix-Error")).toBe("yes");
+      expect((await result.json()).message).toBeTruthy();
+    });
+
+    test("data request that does not match routeId surfaces 403 error for boundary", async () => {
+      let build = mockServerBuild({
+        root: {
+          default: {},
+        },
+        "routes/_index": {
+          parentId: "root",
+          index: true,
+          loader: () => null,
+        },
+      });
+      let handler = createRequestHandler(build, ServerMode.Test);
+
+      // This bug wasn't that the router wasn't returning a 404 (it was), but
+      // that we weren't defensive when looking at match.params when we went
+      // to call handleDataRequest(), - and that threw it's own uncaught
+      // exception triggering a 500.  We need to ensure that this build has a
+      // handleDataRequest implementation for this test to mean anything
+      expect(build.entry.module.handleDataRequest).toBeDefined();
+
+      let request = new Request(`${baseUrl}/?_data=routes/junk`, {
+        method: "get",
+      });
+
+      let result = await handler(request);
+      expect(result.status).toBe(403);
+      expect(result.headers.get("X-Remix-Error")).toBe("yes");
+      expect((await result.json()).message).toBeTruthy();
+    });
+
+    test("data request that does not match route surfaces 404 error for boundary", async () => {
+      let build = mockServerBuild({
+        root: {
+          default: {},
+        },
+        "routes/_index": {
+          parentId: "root",
+          index: true,
+          loader: () => null,
+        },
+      });
+      let handler = createRequestHandler(build, ServerMode.Test);
+
+      let request = new Request(`${baseUrl}/junk?_data=routes/junk`, {
+        method: "get",
+      });
+
+      let result = await handler(request);
+      expect(result.status).toBe(404);
       expect(result.headers.get("X-Remix-Error")).toBe("yes");
       expect((await result.json()).message).toBeTruthy();
     });
@@ -426,7 +635,7 @@ describe("shared server runtime", () => {
           default: {},
           loader: rootLoader,
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           loader: indexLoader,
           index: true,
@@ -434,7 +643,7 @@ describe("shared server runtime", () => {
       });
       let handler = createRequestHandler(build, ServerMode.Test);
 
-      let request = new Request(`${baseUrl}/?_data=routes/index`, {
+      let request = new Request(`${baseUrl}/?_data=routes/_index`, {
         method: "get",
       });
 
@@ -442,7 +651,91 @@ describe("shared server runtime", () => {
       expect(result.status).toBe(200);
       expect(await result.json()).toBe("index");
       expect(rootLoader.mock.calls.length).toBe(0);
-      expect(indexLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(indexLoader.mock.calls.length).toBe(1);
+    });
+
+    test("data request calls loader returning response with immutable headers", async () => {
+      let build = mockServerBuild({
+        root: {
+          default: {},
+        },
+        "routes/_index": {
+          parentId: "root",
+          index: true,
+          loader() {
+            let headers = new Headers({ "x-test": "yes" });
+            let headersProxy = new Proxy(headers, {
+              get(target, prop, receiver) {
+                if (prop === "set") {
+                  throw new TypeError("immutable");
+                }
+                return Reflect.get(target, prop, receiver);
+              },
+            });
+            // Mock a "response" that will pass the `isResponse` check
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: headersProxy,
+              body: "text",
+              text: () => Promise.resolve("text"),
+            };
+          },
+        },
+      });
+      let handler = createRequestHandler(build, ServerMode.Development);
+
+      let request = new Request(`${baseUrl}/?_data=routes/_index`, {
+        method: "get",
+      });
+
+      let result = await handler(request);
+      expect(result.status).toBe(200);
+      expect(result.headers.get("x-test")).toBe("yes");
+      expect(result.headers.get("X-Remix-Response")).toBe("yes");
+      expect(await result.text()).toBe("text");
+    });
+
+    test("data request calls loader throwing response with immutable headers", async () => {
+      let build = mockServerBuild({
+        root: {
+          default: {},
+        },
+        "routes/_index": {
+          parentId: "root",
+          index: true,
+          loader() {
+            let headers = new Headers({ "x-test": "yes" });
+            let headersProxy = new Proxy(headers, {
+              get(target, prop, receiver) {
+                if (prop === "set") {
+                  throw new TypeError("immutable");
+                }
+                return Reflect.get(target, prop, receiver);
+              },
+            });
+            // Mock a "response" that will pass the `isResponse` check
+            throw {
+              status: 400,
+              statusText: "Bad Request",
+              headers: headersProxy,
+              body: "text",
+              text: () => Promise.resolve("text"),
+            };
+          },
+        },
+      });
+      let handler = createRequestHandler(build, ServerMode.Development);
+
+      let request = new Request(`${baseUrl}/?_data=routes/_index`, {
+        method: "get",
+      });
+
+      let result = await handler(request);
+      expect(result.status).toBe(400);
+      expect(result.headers.get("x-test")).toBe("yes");
+      expect(result.headers.get("X-Remix-Catch")).toBe("yes");
+      expect(await result.text()).toBe("text");
     });
 
     test("data request calls loader and responds with generic message and error header", async () => {
@@ -473,7 +766,7 @@ describe("shared server runtime", () => {
       expect(result.status).toBe(500);
       expect((await result.json()).message).toBe("Unexpected Server Error");
       expect(result.headers.get("X-Remix-Error")).toBe("yes");
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(rootLoader.mock.calls.length).toBe(1);
       expect(testAction.mock.calls.length).toBe(0);
     });
 
@@ -507,9 +800,9 @@ describe("shared server runtime", () => {
       expect(result.status).toBe(500);
       expect((await result.json()).message).toBe(message);
       expect(result.headers.get("X-Remix-Error")).toBe("yes");
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(rootLoader.mock.calls.length).toBe(1);
       expect(testAction.mock.calls.length).toBe(0);
-      expect(spy.console.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(spy.console.mock.calls.length).toBe(1);
     });
 
     test("data request calls loader and responds with catch header", async () => {
@@ -540,7 +833,7 @@ describe("shared server runtime", () => {
       expect(result.status).toBe(400);
       expect(await result.text()).toBe("test");
       expect(result.headers.get("X-Remix-Catch")).toBe("yes");
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(rootLoader.mock.calls.length).toBe(1);
       expect(testAction.mock.calls.length).toBe(0);
     });
 
@@ -572,7 +865,7 @@ describe("shared server runtime", () => {
       expect(result.status).toBe(200);
       expect(await result.json()).toBe("test");
       expect(rootLoader.mock.calls.length).toBe(0);
-      expect(testAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(testAction.mock.calls.length).toBe(1);
     });
 
     test("data request calls action and responds with generic message and error header", async () => {
@@ -604,7 +897,7 @@ describe("shared server runtime", () => {
       expect((await result.json()).message).toBe("Unexpected Server Error");
       expect(result.headers.get("X-Remix-Error")).toBe("yes");
       expect(rootLoader.mock.calls.length).toBe(0);
-      expect(testAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(testAction.mock.calls.length).toBe(1);
     });
 
     test("data request calls action and responds with detailed info and error header in development mode", async () => {
@@ -638,8 +931,8 @@ describe("shared server runtime", () => {
       expect((await result.json()).message).toBe(message);
       expect(result.headers.get("X-Remix-Error")).toBe("yes");
       expect(rootLoader.mock.calls.length).toBe(0);
-      expect(testAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(spy.console.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(testAction.mock.calls.length).toBe(1);
+      expect(spy.console.mock.calls.length).toBe(1);
     });
 
     test("data request calls action and responds with catch header", async () => {
@@ -671,7 +964,7 @@ describe("shared server runtime", () => {
       expect(await result.text()).toBe("test");
       expect(result.headers.get("X-Remix-Catch")).toBe("yes");
       expect(rootLoader.mock.calls.length).toBe(0);
-      expect(testAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(testAction.mock.calls.length).toBe(1);
     });
 
     test("data request calls layout action", async () => {
@@ -687,7 +980,7 @@ describe("shared server runtime", () => {
           loader: rootLoader,
           action: rootAction,
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           index: true,
         },
@@ -702,7 +995,7 @@ describe("shared server runtime", () => {
       expect(result.status).toBe(200);
       expect(await result.json()).toBe("root");
       expect(rootLoader.mock.calls.length).toBe(0);
-      expect(rootAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(rootAction.mock.calls.length).toBe(1);
     });
 
     test("data request calls index action", async () => {
@@ -717,7 +1010,7 @@ describe("shared server runtime", () => {
           default: {},
           loader: rootLoader,
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           action: indexAction,
           index: true,
@@ -725,7 +1018,7 @@ describe("shared server runtime", () => {
       });
       let handler = createRequestHandler(build, ServerMode.Test);
 
-      let request = new Request(`${baseUrl}/?index&_data=routes/index`, {
+      let request = new Request(`${baseUrl}/?index&_data=routes/_index`, {
         method: "post",
       });
 
@@ -733,12 +1026,145 @@ describe("shared server runtime", () => {
       expect(result.status).toBe(200);
       expect(await result.json()).toBe("index");
       expect(rootLoader.mock.calls.length).toBe(0);
-      expect(indexAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(indexAction.mock.calls.length).toBe(1);
+    });
+
+    test("data request handleDataRequest redirects are handled", async () => {
+      let rootLoader = jest.fn(() => {
+        return "root";
+      });
+      let indexLoader = jest.fn(() => {
+        return "index";
+      });
+      let build = mockServerBuild({
+        root: {
+          default: {},
+          loader: rootLoader,
+        },
+        "routes/_index": {
+          parentId: "root",
+          loader: indexLoader,
+          index: true,
+        },
+      });
+      build.entry.module.handleDataRequest.mockImplementation(async () => {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "/redirect",
+          },
+        });
+      });
+      let handler = createRequestHandler(build, ServerMode.Test);
+
+      let request = new Request(`${baseUrl}/?_data=routes/_index`, {
+        method: "get",
+      });
+
+      let result = await handler(request);
+      expect(result.status).toBe(204);
+      expect(result.headers.get("X-Remix-Redirect")).toBe("/redirect");
+      expect(result.headers.get("X-Remix-Status")).toBe("302");
+      expect(rootLoader.mock.calls.length).toBe(0);
+      expect(indexLoader.mock.calls.length).toBe(1);
+    });
+
+    test("aborts request", async () => {
+      let rootLoader = jest.fn(() => {
+        return "root";
+      });
+      let indexLoader = jest.fn(() => {
+        return "index";
+      });
+      let build = mockServerBuild({
+        root: {
+          default: {},
+          loader: rootLoader,
+        },
+        "routes/_index": {
+          parentId: "root",
+          loader: indexLoader,
+          index: true,
+        },
+      });
+      let handler = createRequestHandler(build, ServerMode.Test);
+
+      let controller = new AbortController();
+      let request = new Request(`${baseUrl}/?_data=routes/_index`, {
+        method: "get",
+        signal: controller.signal,
+      });
+
+      let resultPromise = handler(request);
+      controller.abort();
+      let result = await resultPromise;
+      expect(result.status).toBe(500);
+      expect(await result.text()).toMatchInlineSnapshot(
+        `"{"message":"Unexpected Server Error"}"`
+      );
+    });
+
+    test("aborts request (v3_throwAbortReason)", async () => {
+      let rootLoader = jest.fn(() => {
+        return "root";
+      });
+      let indexLoader = jest.fn(() => {
+        return "index";
+      });
+      let handleErrorSpy = jest.fn();
+      let build = mockServerBuild(
+        {
+          root: {
+            default: {},
+            loader: rootLoader,
+          },
+          "routes/_index": {
+            parentId: "root",
+            loader: indexLoader,
+            index: true,
+          },
+        },
+        {
+          future: {
+            v3_throwAbortReason: true,
+          },
+          handleError: handleErrorSpy,
+        }
+      );
+      let handler = createRequestHandler(build, ServerMode.Test);
+
+      let controller = new AbortController();
+      let request = new Request(`${baseUrl}/?_data=routes/_index`, {
+        method: "get",
+        signal: controller.signal,
+      });
+
+      let resultPromise = handler(request);
+      controller.abort();
+      let result = await resultPromise;
+      expect(result.status).toBe(500);
+      let error = await result.json();
+      expect(error.message).toBe("This operation was aborted");
+      expect(
+        error.stack.startsWith("AbortError: This operation was aborted")
+      ).toBe(true);
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy.mock.calls[0][0] instanceof DOMException).toBe(
+        true
+      );
+      expect(handleErrorSpy.mock.calls[0][0].name).toBe("AbortError");
+      expect(handleErrorSpy.mock.calls[0][0].message).toBe(
+        "This operation was aborted"
+      );
+      expect(handleErrorSpy.mock.calls[0][1].request.method).toBe("GET");
+      expect(handleErrorSpy.mock.calls[0][1].request.url).toBe(
+        "http://test.com/?_data=routes/_index"
+      );
     });
   });
 
   describe("document requests", () => {
-    test("not found document request for no matches and no CatchBoundary", async () => {
+    test("not found document request for no matches and no ErrorBoundary", async () => {
       let rootLoader = jest.fn(() => {
         return "root";
       });
@@ -757,16 +1183,13 @@ describe("shared server runtime", () => {
       let result = await handler(request);
       expect(result.status).toBe(404);
       expect(rootLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.catch).toBeTruthy();
-      expect(entryContext.appState.catch!.status).toBe(404);
-      expect(entryContext.appState.catchBoundaryRouteId).toBe(null);
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!.root.status).toBe(404);
     });
 
     test("sets root as catch boundary for not found document request", async () => {
@@ -777,7 +1200,7 @@ describe("shared server runtime", () => {
         root: {
           default: {},
           loader: rootLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
       });
       let handler = createRequestHandler(build, ServerMode.Test);
@@ -787,17 +1210,14 @@ describe("shared server runtime", () => {
       let result = await handler(request);
       expect(result.status).toBe(404);
       expect(rootLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.catch).toBeTruthy();
-      expect(entryContext.appState.catch!.status).toBe(404);
-      expect(entryContext.appState.catchBoundaryRouteId).toBe("root");
-      expect(entryContext.routeData).toEqual({});
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!.root.status).toBe(404);
+      expect(context.loaderData).toEqual({});
     });
 
     test("thrown loader responses bubble up", async () => {
@@ -811,9 +1231,9 @@ describe("shared server runtime", () => {
         root: {
           default: {},
           loader: rootLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           index: true,
           default: {},
@@ -826,19 +1246,16 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(400);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(indexLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(rootLoader.mock.calls.length).toBe(1);
+      expect(indexLoader.mock.calls.length).toBe(1);
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.catch).toBeTruthy();
-      expect(entryContext.appState.catch!.status).toBe(400);
-      expect(entryContext.appState.catchBoundaryRouteId).toBe("root");
-      expect(entryContext.routeData).toEqual({
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!.root.status).toBe(400);
+      expect(context.loaderData).toEqual({
         root: "root",
       });
     });
@@ -854,14 +1271,14 @@ describe("shared server runtime", () => {
         root: {
           default: {},
           loader: rootLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           index: true,
           default: {},
           loader: indexLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
       });
       let handler = createRequestHandler(build, ServerMode.Test);
@@ -870,19 +1287,16 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(400);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(indexLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(rootLoader.mock.calls.length).toBe(1);
+      expect(indexLoader.mock.calls.length).toBe(1);
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.catch).toBeTruthy();
-      expect(entryContext.appState.catch!.status).toBe(400);
-      expect(entryContext.appState.catchBoundaryRouteId).toBe("routes/index");
-      expect(entryContext.routeData).toEqual({
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!["routes/_index"].status).toBe(400);
+      expect(context.loaderData).toEqual({
         root: "root",
       });
     });
@@ -901,7 +1315,7 @@ describe("shared server runtime", () => {
         root: {
           default: {},
           loader: rootLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
         "routes/test": {
           parentId: "root",
@@ -917,21 +1331,21 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(400);
-      expect(testAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(testAction.mock.calls.length).toBe(1);
       // Should not call root loader since it is the boundary route
       expect(rootLoader.mock.calls.length).toBe(0);
       expect(testLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.catch).toBeTruthy();
-      expect(entryContext.appState.catch!.status).toBe(400);
-      expect(entryContext.appState.catchBoundaryRouteId).toBe("root");
-      expect(entryContext.routeData).toEqual({});
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!.root.status).toBe(400);
+      expect(context.loaderData).toEqual({
+        root: null,
+        "routes/test": null,
+      });
     });
 
     test("thrown action responses bubble up for index routes", async () => {
@@ -948,9 +1362,9 @@ describe("shared server runtime", () => {
         root: {
           default: {},
           loader: rootLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           index: true,
           default: {},
@@ -964,21 +1378,21 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(400);
-      expect(indexAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(indexAction.mock.calls.length).toBe(1);
       // Should not call root loader since it is the boundary route
       expect(rootLoader.mock.calls.length).toBe(0);
       expect(indexLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.catch).toBeTruthy();
-      expect(entryContext.appState.catch!.status).toBe(400);
-      expect(entryContext.appState.catchBoundaryRouteId).toBe("root");
-      expect(entryContext.routeData).toEqual({});
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!.root.status).toBe(400);
+      expect(context.loaderData).toEqual({
+        root: null,
+        "routes/_index": null,
+      });
     });
 
     test("thrown action responses catch deep", async () => {
@@ -995,7 +1409,7 @@ describe("shared server runtime", () => {
         root: {
           default: {},
           loader: rootLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
         "routes/test": {
           parentId: "root",
@@ -1003,7 +1417,7 @@ describe("shared server runtime", () => {
           default: {},
           loader: testLoader,
           action: testAction,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
       });
       let handler = createRequestHandler(build, ServerMode.Test);
@@ -1012,21 +1426,19 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(400);
-      expect(testAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(testAction.mock.calls.length).toBe(1);
+      expect(rootLoader.mock.calls.length).toBe(1);
       expect(testLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.catch).toBeTruthy();
-      expect(entryContext.appState.catch!.status).toBe(400);
-      expect(entryContext.appState.catchBoundaryRouteId).toBe("routes/test");
-      expect(entryContext.routeData).toEqual({
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!["routes/test"].status).toBe(400);
+      expect(context.loaderData).toEqual({
         root: "root",
+        "routes/test": null,
       });
     });
 
@@ -1044,15 +1456,15 @@ describe("shared server runtime", () => {
         root: {
           default: {},
           loader: rootLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           index: true,
           default: {},
           loader: indexLoader,
           action: indexAction,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
       });
       let handler = createRequestHandler(build, ServerMode.Test);
@@ -1061,21 +1473,19 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(400);
-      expect(indexAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(indexAction.mock.calls.length).toBe(1);
+      expect(rootLoader.mock.calls.length).toBe(1);
       expect(indexLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.catch).toBeTruthy();
-      expect(entryContext.appState.catch!.status).toBe(400);
-      expect(entryContext.appState.catchBoundaryRouteId).toBe("routes/index");
-      expect(entryContext.routeData).toEqual({
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!["routes/_index"].status).toBe(400);
+      expect(context.loaderData).toEqual({
         root: "root",
+        "routes/_index": null,
       });
     });
 
@@ -1096,13 +1506,13 @@ describe("shared server runtime", () => {
         root: {
           default: {},
           loader: rootLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
         "routes/__layout": {
           parentId: "root",
           default: {},
           loader: layoutLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
         "routes/__layout/test": {
           parentId: "routes/__layout",
@@ -1118,23 +1528,20 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(400);
-      expect(testAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(testAction.mock.calls.length).toBe(1);
+      expect(rootLoader.mock.calls.length).toBe(1);
       expect(testLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.catch).toBeTruthy();
-      expect(entryContext.appState.catch.data).toBe("action");
-      expect(entryContext.appState.catchBoundaryRouteId).toBe(
-        "routes/__layout"
-      );
-      expect(entryContext.routeData).toEqual({
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!["routes/__layout"].data).toBe("action");
+      expect(context.loaderData).toEqual({
         root: "root",
+        "routes/__layout": null,
+        "routes/__layout/test": null,
       });
     });
 
@@ -1155,13 +1562,13 @@ describe("shared server runtime", () => {
         root: {
           default: {},
           loader: rootLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
         "routes/__layout": {
           parentId: "root",
           default: {},
           loader: layoutLoader,
-          CatchBoundary: {},
+          ErrorBoundary: {},
         },
         "routes/__layout/index": {
           parentId: "routes/__layout",
@@ -1177,23 +1584,20 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(400);
-      expect(indexAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(indexAction.mock.calls.length).toBe(1);
+      expect(rootLoader.mock.calls.length).toBe(1);
       expect(indexLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.catch).toBeTruthy();
-      expect(entryContext.appState.catch.data).toBe("action");
-      expect(entryContext.appState.catchBoundaryRouteId).toBe(
-        "routes/__layout"
-      );
-      expect(entryContext.routeData).toEqual({
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!["routes/__layout"].data).toBe("action");
+      expect(context.loaderData).toEqual({
         root: "root",
+        "routes/__layout": null,
+        "routes/__layout/index": null,
       });
     });
 
@@ -1210,7 +1614,7 @@ describe("shared server runtime", () => {
           loader: rootLoader,
           ErrorBoundary: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           index: true,
           default: {},
@@ -1223,19 +1627,18 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(500);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(indexLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(rootLoader.mock.calls.length).toBe(1);
+      expect(indexLoader.mock.calls.length).toBe(1);
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.error).toBeTruthy();
-      expect(entryContext.appState.error.message).toBe("index");
-      expect(entryContext.appState.loaderBoundaryRouteId).toBe("root");
-      expect(entryContext.routeData).toEqual({
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!.root).toBeInstanceOf(Error);
+      expect(context.errors!.root.message).toBe("Unexpected Server Error");
+      expect(context.errors!.root.stack).toBeUndefined();
+      expect(context.loaderData).toEqual({
         root: "root",
       });
     });
@@ -1253,7 +1656,7 @@ describe("shared server runtime", () => {
           loader: rootLoader,
           ErrorBoundary: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           index: true,
           default: {},
@@ -1267,19 +1670,20 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(500);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(indexLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(rootLoader.mock.calls.length).toBe(1);
+      expect(indexLoader.mock.calls.length).toBe(1);
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.error).toBeTruthy();
-      expect(entryContext.appState.error.message).toBe("index");
-      expect(entryContext.appState.loaderBoundaryRouteId).toBe("routes/index");
-      expect(entryContext.routeData).toEqual({
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!["routes/_index"]).toBeInstanceOf(Error);
+      expect(context.errors!["routes/_index"].message).toBe(
+        "Unexpected Server Error"
+      );
+      expect(context.errors!["routes/_index"].stack).toBeUndefined();
+      expect(context.loaderData).toEqual({
         root: "root",
       });
     });
@@ -1314,21 +1718,23 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(500);
-      expect(testAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(testAction.mock.calls.length).toBe(1);
       // Should not call root loader since it is the boundary route
       expect(rootLoader.mock.calls.length).toBe(0);
       expect(testLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.error).toBeTruthy();
-      expect(entryContext.appState.error.message).toBe("test");
-      expect(entryContext.appState.loaderBoundaryRouteId).toBe("root");
-      expect(entryContext.routeData).toEqual({});
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!.root).toBeInstanceOf(Error);
+      expect(context.errors!.root.message).toBe("Unexpected Server Error");
+      expect(context.errors!.root.stack).toBeUndefined();
+      expect(context.loaderData).toEqual({
+        root: null,
+        "routes/test": null,
+      });
     });
 
     test("action errors bubble up for index routes", async () => {
@@ -1347,7 +1753,7 @@ describe("shared server runtime", () => {
           loader: rootLoader,
           ErrorBoundary: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           index: true,
           default: {},
@@ -1361,21 +1767,23 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(500);
-      expect(indexAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(indexAction.mock.calls.length).toBe(1);
       // Should not call root loader since it is the boundary route
       expect(rootLoader.mock.calls.length).toBe(0);
       expect(indexLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.error).toBeTruthy();
-      expect(entryContext.appState.error.message).toBe("index");
-      expect(entryContext.appState.loaderBoundaryRouteId).toBe("root");
-      expect(entryContext.routeData).toEqual({});
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!.root).toBeInstanceOf(Error);
+      expect(context.errors!.root.message).toBe("Unexpected Server Error");
+      expect(context.errors!.root.stack).toBeUndefined();
+      expect(context.loaderData).toEqual({
+        root: null,
+        "routes/_index": null,
+      });
     });
 
     test("action errors catch deep", async () => {
@@ -1409,21 +1817,23 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(500);
-      expect(testAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(testAction.mock.calls.length).toBe(1);
+      expect(rootLoader.mock.calls.length).toBe(1);
       expect(testLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.error).toBeTruthy();
-      expect(entryContext.appState.error.message).toBe("test");
-      expect(entryContext.appState.loaderBoundaryRouteId).toBe("routes/test");
-      expect(entryContext.routeData).toEqual({
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!["routes/test"]).toBeInstanceOf(Error);
+      expect(context.errors!["routes/test"].message).toBe(
+        "Unexpected Server Error"
+      );
+      expect(context.errors!["routes/test"].stack).toBeUndefined();
+      expect(context.loaderData).toEqual({
         root: "root",
+        "routes/test": null,
       });
     });
 
@@ -1443,7 +1853,7 @@ describe("shared server runtime", () => {
           loader: rootLoader,
           ErrorBoundary: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           index: true,
           default: {},
@@ -1458,21 +1868,23 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(500);
-      expect(indexAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(indexAction.mock.calls.length).toBe(1);
+      expect(rootLoader.mock.calls.length).toBe(1);
       expect(indexLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.error).toBeTruthy();
-      expect(entryContext.appState.error.message).toBe("index");
-      expect(entryContext.appState.loaderBoundaryRouteId).toBe("routes/index");
-      expect(entryContext.routeData).toEqual({
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!["routes/_index"]).toBeInstanceOf(Error);
+      expect(context.errors!["routes/_index"].message).toBe(
+        "Unexpected Server Error"
+      );
+      expect(context.errors!["routes/_index"].stack).toBeUndefined();
+      expect(context.loaderData).toEqual({
         root: "root",
+        "routes/_index": null,
       });
     });
 
@@ -1515,23 +1927,24 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(500);
-      expect(testAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(testAction.mock.calls.length).toBe(1);
+      expect(rootLoader.mock.calls.length).toBe(1);
       expect(testLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.error).toBeTruthy();
-      expect(entryContext.appState.error.message).toBe("action");
-      expect(entryContext.appState.loaderBoundaryRouteId).toBe(
-        "routes/__layout"
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!["routes/__layout"]).toBeInstanceOf(Error);
+      expect(context.errors!["routes/__layout"].message).toBe(
+        "Unexpected Server Error"
       );
-      expect(entryContext.routeData).toEqual({
+      expect(context.errors!["routes/__layout"].stack).toBeUndefined();
+      expect(context.loaderData).toEqual({
         root: "root",
+        "routes/__layout": null,
+        "routes/__layout/test": null,
       });
     });
 
@@ -1574,23 +1987,24 @@ describe("shared server runtime", () => {
 
       let result = await handler(request);
       expect(result.status).toBe(500);
-      expect(indexAction.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      expect(rootLoader.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(indexAction.mock.calls.length).toBe(1);
+      expect(rootLoader.mock.calls.length).toBe(1);
       expect(indexLoader.mock.calls.length).toBe(0);
-      expect(build.entry.module.default.mock.calls.length).toBe(
-        1 * DATA_CALL_MULTIPIER
-      );
+      expect(build.entry.module.default.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(1 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[0][3];
-      expect(entryContext.appState.error).toBeTruthy();
-      expect(entryContext.appState.error.message).toBe("action");
-      expect(entryContext.appState.loaderBoundaryRouteId).toBe(
-        "routes/__layout"
+      expect(calls.length).toBe(1);
+      let context = calls[0][3].staticHandlerContext as StaticHandlerContext;
+      expect(context.errors).toBeTruthy();
+      expect(context.errors!["routes/__layout"]).toBeInstanceOf(Error);
+      expect(context.errors!["routes/__layout"].message).toBe(
+        "Unexpected Server Error"
       );
-      expect(entryContext.routeData).toEqual({
+      expect(context.errors!["routes/__layout"].stack).toBeUndefined();
+      expect(context.loaderData).toEqual({
         root: "root",
+        "routes/__layout": null,
+        "routes/__layout/index": null,
       });
     });
 
@@ -1607,8 +2021,9 @@ describe("shared server runtime", () => {
           loader: rootLoader,
           ErrorBoundary: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
+          index: true,
           default: {},
           loader: indexLoader,
         },
@@ -1620,11 +2035,11 @@ describe("shared server runtime", () => {
           throw new Error("thrown");
         }
         calledBefore = true;
-        return ogHandleDocumentRequest.call(null, arguments);
+        return ogHandleDocumentRequest.call(null, ...arguments);
       }) as any;
-      let handler = createRequestHandler(build, ServerMode.Test);
+      let handler = createRequestHandler(build, ServerMode.Development);
 
-      let request = new Request(`${baseUrl}/`, { method: "get" });
+      let request = new Request(`${baseUrl}/404`, { method: "get" });
 
       let result = await handler(request);
       expect(result.status).toBe(500);
@@ -1632,12 +2047,52 @@ describe("shared server runtime", () => {
       expect(indexLoader.mock.calls.length).toBe(0);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(2 * DATA_CALL_MULTIPIER);
-      let entryContext = calls[1][3];
-      expect(entryContext.appState.error).toBeTruthy();
-      expect(entryContext.appState.error.message).toBe("thrown");
-      expect(entryContext.appState.trackBoundaries).toBe(false);
-      expect(entryContext.routeData).toEqual({});
+      expect(calls.length).toBe(2);
+      let context = calls[1][3].staticHandlerContext;
+      expect(context.errors.root).toBeTruthy();
+      expect(context.errors!.root.message).toBe("thrown");
+      expect(context.loaderData).toEqual({});
+    });
+
+    test("unwraps responses thrown from handleDocumentRequest", async () => {
+      let rootLoader = jest.fn(() => {
+        return "root";
+      });
+      let indexLoader = jest.fn(() => {
+        return "index";
+      });
+      let build = mockServerBuild({
+        root: {
+          default: {},
+          loader: rootLoader,
+          ErrorBoundary: {},
+        },
+        "routes/_index": {
+          parentId: "root",
+          index: true,
+          default: {},
+          loader: indexLoader,
+        },
+      });
+      let ogHandleDocumentRequest = build.entry.module.default;
+      build.entry.module.default = function (
+        _: Request,
+        responseStatusCode: number
+      ) {
+        if (responseStatusCode === 200) {
+          throw new Response("Uh oh!", {
+            status: 400,
+            statusText: "Bad Request",
+          });
+        }
+        return ogHandleDocumentRequest.call(null, ...arguments);
+      } as any;
+      let handler = createRequestHandler(build, ServerMode.Development);
+
+      let request = new Request(`${baseUrl}/`, { method: "get" });
+
+      let result = await handler(request);
+      expect(result.status).toBe(400);
     });
 
     test("returns generic message if handleDocumentRequest throws a second time", async () => {
@@ -1653,7 +2108,7 @@ describe("shared server runtime", () => {
           loader: rootLoader,
           ErrorBoundary: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
           default: {},
           loader: indexLoader,
@@ -1677,7 +2132,7 @@ describe("shared server runtime", () => {
       expect(indexLoader.mock.calls.length).toBe(0);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(2 * DATA_CALL_MULTIPIER);
+      expect(calls.length).toBe(2);
     });
 
     test("returns more detailed message if handleDocumentRequest throws a second time in development mode", async () => {
@@ -1689,12 +2144,14 @@ describe("shared server runtime", () => {
       });
       let build = mockServerBuild({
         root: {
+          path: "/",
           default: {},
           loader: rootLoader,
           ErrorBoundary: {},
         },
-        "routes/index": {
+        "routes/_index": {
           parentId: "root",
+          index: true,
           default: {},
           loader: indexLoader,
         },
@@ -1704,21 +2161,174 @@ describe("shared server runtime", () => {
       let lastThrownError;
       build.entry.module.default = jest.fn(function () {
         lastThrownError = new Error(errorMessage);
+        errorMessage = "second error thrown from handleDocumentRequest";
         throw lastThrownError;
       }) as any;
       let handler = createRequestHandler(build, ServerMode.Development);
 
-      let request = new Request(`${baseUrl}/`, { method: "get" });
+      let request = new Request(`${baseUrl}/`);
 
       let result = await handler(request);
       expect(result.status).toBe(500);
       expect((await result.text()).includes(errorMessage)).toBe(true);
-      expect(rootLoader.mock.calls.length).toBe(0);
-      expect(indexLoader.mock.calls.length).toBe(0);
+      expect(rootLoader.mock.calls.length).toBe(1);
+      expect(indexLoader.mock.calls.length).toBe(1);
 
       let calls = build.entry.module.default.mock.calls;
-      expect(calls.length).toBe(2 * DATA_CALL_MULTIPIER);
-      expect(spy.console.mock.calls.length).toBe(1 * DATA_CALL_MULTIPIER);
+      expect(calls.length).toBe(2);
+      expect(spy.console.mock.calls).toEqual([
+        [
+          new Error(
+            "thrown from handleDocumentRequest and expected to be logged in console only once"
+          ),
+        ],
+        [new Error("second error thrown from handleDocumentRequest")],
+      ]);
     });
+
+    test("aborts request", async () => {
+      let rootLoader = jest.fn(() => {
+        return "root";
+      });
+      let indexLoader = jest.fn(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        return "index";
+      });
+      let handleErrorSpy = jest.fn();
+      let build = mockServerBuild(
+        {
+          root: {
+            default() {},
+            loader: rootLoader,
+          },
+          "routes/_index": {
+            loader: indexLoader,
+            index: true,
+            default: {},
+          },
+        },
+        {
+          handleError: handleErrorSpy,
+        }
+      );
+      let handler = createRequestHandler(build, ServerMode.Test);
+
+      let controller = new AbortController();
+      let request = new Request(`${baseUrl}/`, {
+        method: "get",
+        signal: controller.signal,
+      });
+
+      let resultPromise = handler(request);
+      controller.abort();
+      let result = await resultPromise;
+      expect(result.status).toBe(500);
+      expect(build.entry.module.default.mock.calls.length).toBe(0);
+
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy.mock.calls[0][0] instanceof Error).toBe(true);
+      expect(handleErrorSpy.mock.calls[0][0].name).toBe("Error");
+      expect(handleErrorSpy.mock.calls[0][0].message).toBe(
+        "query() call aborted: GET http://test.com/"
+      );
+    });
+
+    test("aborts request (v3_throwAbortReason)", async () => {
+      let rootLoader = jest.fn(() => {
+        return "root";
+      });
+      let indexLoader = jest.fn(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        return "index";
+      });
+      let handleErrorSpy = jest.fn();
+      let build = mockServerBuild(
+        {
+          root: {
+            default: {},
+            loader: rootLoader,
+          },
+          "routes/resource": {
+            loader: indexLoader,
+            index: true,
+            default: {},
+          },
+        },
+        {
+          future: {
+            v3_throwAbortReason: true,
+          },
+          handleError: handleErrorSpy,
+        }
+      );
+      let handler = createRequestHandler(build, ServerMode.Test);
+
+      let controller = new AbortController();
+      let request = new Request(`${baseUrl}/`, {
+        method: "get",
+        signal: controller.signal,
+      });
+
+      let resultPromise = handler(request);
+      controller.abort();
+      let result = await resultPromise;
+      expect(result.status).toBe(500);
+      expect(build.entry.module.default.mock.calls.length).toBe(0);
+
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy.mock.calls[0][0] instanceof DOMException).toBe(
+        true
+      );
+      expect(handleErrorSpy.mock.calls[0][0].name).toBe("AbortError");
+      expect(handleErrorSpy.mock.calls[0][0].message).toBe(
+        "This operation was aborted"
+      );
+      expect(handleErrorSpy.mock.calls[0][1].request.method).toBe("GET");
+      expect(handleErrorSpy.mock.calls[0][1].request.url).toBe(
+        "http://test.com/"
+      );
+    });
+  });
+
+  test("provides load context to server entrypoint", async () => {
+    let rootLoader = jest.fn(() => {
+      return "root";
+    });
+    let indexLoader = jest.fn(() => {
+      return "index";
+    });
+    let build = mockServerBuild({
+      root: {
+        default: {},
+        loader: rootLoader,
+        ErrorBoundary: {},
+      },
+      "routes/_index": {
+        parentId: "root",
+        default: {},
+        loader: indexLoader,
+      },
+    });
+
+    build.entry.module.default = jest.fn(
+      async (
+        request,
+        responseStatusCode,
+        responseHeaders,
+        entryContext,
+        loadContext
+      ) =>
+        new Response(JSON.stringify(loadContext), {
+          status: responseStatusCode,
+          headers: responseHeaders,
+        })
+    );
+
+    let handler = createRequestHandler(build, ServerMode.Development);
+    let request = new Request(`${baseUrl}/`, { method: "get" });
+    let loadContext = { "load-context": "load-value" };
+
+    let result = await handler(request, loadContext);
+    expect(await result.text()).toBe(JSON.stringify(loadContext));
   });
 });

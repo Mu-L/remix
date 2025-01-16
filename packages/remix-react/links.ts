@@ -1,13 +1,10 @@
-// TODO: We eventually might not want to import anything directly from `history`
-// and leverage `react-router` here instead
-import type { Location } from "history";
-import { parsePath } from "history";
+import type { AgnosticDataRouteMatch } from "@remix-run/router";
+import type { Location } from "react-router-dom";
+import { parsePath } from "react-router-dom";
 
-import type { AssetsManifest } from "./entry";
-import type { ClientRoute } from "./routes";
-import type { RouteMatch } from "./routeMatching";
-// import { matchClientRoutes } from "./routeMatching";
+import type { AssetsManifest, FutureConfig } from "./entry";
 import type { RouteModules, RouteModule } from "./routeModules";
+import type { EntryRoute } from "./routes";
 import { loadRouteModule } from "./routeModules";
 
 type Primitive = null | undefined | string | number | boolean | symbol | bigint;
@@ -177,23 +174,10 @@ interface HtmlLinkPreloadImage extends HtmlLinkProps {
 export type HtmlLinkDescriptor =
   // Must have an href *unless* it's a `<link rel="preload" as="image">` with an
   // `imageSrcSet` and `imageSizes` props
-  (
-    | (HtmlLinkProps & Pick<Required<HtmlLinkProps>, "href">)
-    | (HtmlLinkPreloadImage &
-        Pick<Required<HtmlLinkPreloadImage>, "imageSizes">)
-    | (HtmlLinkPreloadImage &
-        Pick<Required<HtmlLinkPreloadImage>, "href"> & { imageSizes?: never })
-  ) & {
-    /**
-     * @deprecated Use `imageSrcSet` instead.
-     */
-    imagesrcset?: string;
-
-    /**
-     * @deprecated Use `imageSizes` instead.
-     */
-    imagesizes?: string;
-  };
+  | (HtmlLinkProps & Pick<Required<HtmlLinkProps>, "href">)
+  | (HtmlLinkPreloadImage & Pick<Required<HtmlLinkPreloadImage>, "imageSizes">)
+  | (HtmlLinkPreloadImage &
+      Pick<Required<HtmlLinkPreloadImage>, "href"> & { imageSizes?: never });
 
 export interface PrefetchPageDescriptor
   extends Omit<
@@ -204,8 +188,6 @@ export interface PrefetchPageDescriptor
     | "sizes"
     | "imageSrcSet"
     | "imageSizes"
-    | "imagesrcset"
-    | "imagesizes"
     | "as"
     | "color"
     | "title"
@@ -224,28 +206,37 @@ export type LinkDescriptor = HtmlLinkDescriptor | PrefetchPageDescriptor;
  * Gets all the links for a set of matches. The modules are assumed to have been
  * loaded already.
  */
-export function getLinksForMatches(
-  matches: RouteMatch<ClientRoute>[],
+export function getKeyedLinksForMatches(
+  matches: AgnosticDataRouteMatch[],
   routeModules: RouteModules,
   manifest: AssetsManifest
-): LinkDescriptor[] {
+): KeyedLinkDescriptor[] {
   let descriptors = matches
-    .map((match): LinkDescriptor[] => {
+    .map((match): LinkDescriptor[][] => {
       let module = routeModules[match.route.id];
-      return module.links?.() || [];
+      let route = manifest.routes[match.route.id];
+      return [
+        route.css ? route.css.map((href) => ({ rel: "stylesheet", href })) : [],
+        module?.links?.() || [],
+      ];
     })
-    .flat(1);
+    .flat(2);
 
   let preloads = getCurrentPageModulePreloadHrefs(matches, manifest);
-  return dedupe(descriptors, preloads);
+  return dedupeLinkDescriptors(descriptors, preloads);
 }
 
 export async function prefetchStyleLinks(
+  route: EntryRoute,
   routeModule: RouteModule
 ): Promise<void> {
-  if (!routeModule.links) return;
-  let descriptors = routeModule.links();
-  if (!descriptors) return;
+  if ((!route.css && !routeModule.links) || !isPreloadSupported()) return;
+
+  let descriptors = [
+    route.css?.map((href) => ({ rel: "stylesheet", href })) ?? [],
+    routeModule.links?.() ?? [],
+  ].flat(1);
+  if (descriptors.length === 0) return;
 
   let styleLinks: HtmlLinkDescriptor[] = [];
   for (let descriptor of descriptors) {
@@ -258,9 +249,12 @@ export async function prefetchStyleLinks(
     }
   }
 
-  // don't block for non-matching media queries
+  // don't block for non-matching media queries, or for stylesheets that are
+  // already in the DOM (active route revalidations)
   let matchingLinks = styleLinks.filter(
-    (link) => !link.media || window.matchMedia(link.media).matches
+    (link) =>
+      (!link.media || window.matchMedia(link.media).matches) &&
+      !document.querySelector(`link[rel="stylesheet"][href="${link.href}"]`)
   );
 
   await Promise.all(matchingLinks.map(prefetchStyleLink));
@@ -303,64 +297,73 @@ export function isPageLinkDescriptor(
   return object != null && typeof object.page === "string";
 }
 
-export function isHtmlLinkDescriptor(
-  object: any
-): object is HtmlLinkDescriptor {
-  if (object == null) return false;
+function isHtmlLinkDescriptor(object: any): object is HtmlLinkDescriptor {
+  if (object == null) {
+    return false;
+  }
 
-  // <link> may not have an href if <link rel="preload"> is used with imagesrcset + imagesizes
+  // <link> may not have an href if <link rel="preload"> is used with imageSrcSet + imageSizes
   // https://github.com/remix-run/remix/issues/184
   // https://html.spec.whatwg.org/commit-snapshots/cb4f5ff75de5f4cbd7013c4abad02f21c77d4d1c/#attr-link-imagesrcset
   if (object.href == null) {
     return (
       object.rel === "preload" &&
-      (typeof object.imageSrcSet === "string" ||
-        typeof object.imagesrcset === "string") &&
-      (typeof object.imageSizes === "string" ||
-        typeof object.imagesizes === "string")
+      typeof object.imageSrcSet === "string" &&
+      typeof object.imageSizes === "string"
     );
   }
+
   return typeof object.rel === "string" && typeof object.href === "string";
 }
 
-export async function getStylesheetPrefetchLinks(
-  matches: RouteMatch<ClientRoute>[],
+export type KeyedHtmlLinkDescriptor = { key: string; link: HtmlLinkDescriptor };
+
+export async function getKeyedPrefetchLinks(
+  matches: AgnosticDataRouteMatch[],
+  manifest: AssetsManifest,
   routeModules: RouteModules
-): Promise<HtmlLinkDescriptor[]> {
+): Promise<KeyedHtmlLinkDescriptor[]> {
   let links = await Promise.all(
     matches.map(async (match) => {
-      let mod = await loadRouteModule(match.route, routeModules);
+      let mod = await loadRouteModule(
+        manifest.routes[match.route.id],
+        routeModules
+      );
       return mod.links ? mod.links() : [];
     })
   );
 
-  return links
-    .flat(1)
-    .filter(isHtmlLinkDescriptor)
-    .filter((link) => link.rel === "stylesheet" || link.rel === "preload")
-    .map((link) =>
-      link.rel === "preload"
-        ? ({ ...link, rel: "prefetch" } as HtmlLinkDescriptor)
-        : ({ ...link, rel: "prefetch", as: "style" } as HtmlLinkDescriptor)
-    );
+  return dedupeLinkDescriptors(
+    links
+      .flat(1)
+      .filter(isHtmlLinkDescriptor)
+      .filter((link) => link.rel === "stylesheet" || link.rel === "preload")
+      .map((link) =>
+        link.rel === "stylesheet"
+          ? ({ ...link, rel: "prefetch", as: "style" } as HtmlLinkDescriptor)
+          : ({ ...link, rel: "prefetch" } as HtmlLinkDescriptor)
+      )
+  );
 }
 
 // This is ridiculously identical to transition.ts `filterMatchesToLoad`
 export function getNewMatchesForLinks(
   page: string,
-  nextMatches: RouteMatch<ClientRoute>[],
-  currentMatches: RouteMatch<ClientRoute>[],
+  nextMatches: AgnosticDataRouteMatch[],
+  currentMatches: AgnosticDataRouteMatch[],
+  manifest: AssetsManifest,
   location: Location,
+  future: FutureConfig,
   mode: "data" | "assets"
-): RouteMatch<ClientRoute>[] {
+): AgnosticDataRouteMatch[] {
   let path = parsePathPatch(page);
 
-  let isNew = (match: RouteMatch<ClientRoute>, index: number) => {
+  let isNew = (match: AgnosticDataRouteMatch, index: number) => {
     if (!currentMatches[index]) return true;
     return match.route.id !== currentMatches[index].route.id;
   };
 
-  let matchPathChanged = (match: RouteMatch<ClientRoute>, index: number) => {
+  let matchPathChanged = (match: AgnosticDataRouteMatch, index: number) => {
     return (
       // param change, /users/123 -> /users/456
       currentMatches[index].pathname !== match.pathname ||
@@ -374,11 +377,13 @@ export function getNewMatchesForLinks(
   // NOTE: keep this mostly up-to-date w/ the transition data diff, but this
   // version doesn't care about submissions
   let newMatches =
-    mode === "data" && location.search !== path.search
+    mode === "data" &&
+    (future.v3_singleFetch || location.search !== path.search)
       ? // this is really similar to stuff in transition.ts, maybe somebody smarter
         // than me (or in less of a hurry) can share some of it. You're the best.
         nextMatches.filter((match, index) => {
-          if (!match.route.hasLoader) {
+          let manifestRoute = manifest.routes[match.route.id];
+          if (!manifestRoute.hasLoader) {
             return false;
           }
 
@@ -386,21 +391,33 @@ export function getNewMatchesForLinks(
             return true;
           }
 
-          if (match.route.shouldReload) {
-            return match.route.shouldReload({
-              params: match.params,
-              prevUrl: new URL(
+          // For reused routes on GET navigations, by default:
+          // - Single fetch always revalidates
+          // - Multi fetch revalidates if search params changed
+          let defaultShouldRevalidate =
+            future.v3_singleFetch || location.search !== path.search;
+
+          if (match.route.shouldRevalidate) {
+            let routeChoice = match.route.shouldRevalidate({
+              currentUrl: new URL(
                 location.pathname + location.search + location.hash,
                 window.origin
               ),
-              url: new URL(page, window.origin),
+              currentParams: currentMatches[0]?.params || {},
+              nextUrl: new URL(page, window.origin),
+              nextParams: match.params,
+              defaultShouldRevalidate,
             });
+            if (typeof routeChoice === "boolean") {
+              return routeChoice;
+            }
           }
-          return true;
+          return defaultShouldRevalidate;
         })
       : nextMatches.filter((match, index) => {
+          let manifestRoute = manifest.routes[match.route.id];
           return (
-            (mode === "assets" || match.route.hasLoader) &&
+            (mode === "assets" || manifestRoute.hasLoader) &&
             (isNew(match, index) || matchPathChanged(match, index))
           );
         });
@@ -410,13 +427,17 @@ export function getNewMatchesForLinks(
 
 export function getDataLinkHrefs(
   page: string,
-  matches: RouteMatch<ClientRoute>[],
+  matches: AgnosticDataRouteMatch[],
   manifest: AssetsManifest
 ): string[] {
   let path = parsePathPatch(page);
   return dedupeHrefs(
     matches
-      .filter((match) => manifest.routes[match.route.id].hasLoader)
+      .filter(
+        (match) =>
+          manifest.routes[match.route.id].hasLoader &&
+          !manifest.routes[match.route.id].hasClientLoader
+      )
       .map((match) => {
         let { pathname, search } = path;
         let searchParams = new URLSearchParams(search);
@@ -427,7 +448,7 @@ export function getDataLinkHrefs(
 }
 
 export function getModuleLinkHrefs(
-  matches: RouteMatch<ClientRoute>[],
+  matches: AgnosticDataRouteMatch[],
   manifestPatch: AssetsManifest
 ): string[] {
   return dedupeHrefs(
@@ -448,7 +469,7 @@ export function getModuleLinkHrefs(
 // need to include them in a page prefetch, this gives us the list to remove
 // while deduping.
 function getCurrentPageModulePreloadHrefs(
-  matches: RouteMatch<ClientRoute>[],
+  matches: AgnosticDataRouteMatch[],
   manifest: AssetsManifest
 ): string[] {
   return dedupeHrefs(
@@ -471,12 +492,32 @@ function dedupeHrefs(hrefs: string[]): string[] {
   return [...new Set(hrefs)];
 }
 
-export function dedupe(descriptors: LinkDescriptor[], preloads: string[]) {
+function sortKeys<Obj extends { [Key in keyof Obj]: Obj[Key] }>(obj: Obj): Obj {
+  let sorted = {} as Obj;
+  let keys = Object.keys(obj).sort();
+
+  for (let key of keys) {
+    sorted[key as keyof Obj] = obj[key as keyof Obj];
+  }
+
+  return sorted;
+}
+
+type KeyedLinkDescriptor<Descriptor extends LinkDescriptor = LinkDescriptor> = {
+  key: string;
+  link: Descriptor;
+};
+
+function dedupeLinkDescriptors<Descriptor extends LinkDescriptor>(
+  descriptors: Descriptor[],
+  preloads?: string[]
+): KeyedLinkDescriptor<Descriptor>[] {
   let set = new Set();
   let preloadsSet = new Set(preloads);
 
   return descriptors.reduce((deduped, descriptor) => {
     let alreadyModulePreload =
+      preloads &&
       !isPageLinkDescriptor(descriptor) &&
       descriptor.as === "script" &&
       descriptor.href &&
@@ -486,14 +527,14 @@ export function dedupe(descriptors: LinkDescriptor[], preloads: string[]) {
       return deduped;
     }
 
-    let str = JSON.stringify(descriptor);
-    if (!set.has(str)) {
-      set.add(str);
-      deduped.push(descriptor);
+    let key = JSON.stringify(sortKeys(descriptor));
+    if (!set.has(key)) {
+      set.add(key);
+      deduped.push({ key, link: descriptor });
     }
 
     return deduped;
-  }, [] as LinkDescriptor[]);
+  }, [] as KeyedLinkDescriptor<Descriptor>[]);
 }
 
 // https://github.com/remix-run/history/issues/897
@@ -501,4 +542,18 @@ function parsePathPatch(href: string) {
   let path = parsePath(href);
   if (path.search === undefined) path.search = "";
   return path;
+}
+
+// Detect if this browser supports <link rel="preload"> (or has it enabled).
+// Originally added to handle the firefox `network.preload` config:
+//   https://bugzilla.mozilla.org/show_bug.cgi?id=1847811
+let _isPreloadSupported: boolean | undefined;
+function isPreloadSupported(): boolean {
+  if (_isPreloadSupported !== undefined) {
+    return _isPreloadSupported;
+  }
+  let el: HTMLLinkElement | null = document.createElement("link");
+  _isPreloadSupported = el.relList.supports("preload");
+  el = null;
+  return _isPreloadSupported;
 }

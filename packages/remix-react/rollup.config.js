@@ -1,14 +1,14 @@
-const path = require("path");
+const path = require("node:path");
 const babel = require("@rollup/plugin-babel").default;
 const nodeResolve = require("@rollup/plugin-node-resolve").default;
 const copy = require("rollup-plugin-copy");
+const replace = require("@rollup/plugin-replace");
 
 const {
   copyToPlaygrounds,
   createBanner,
   getOutputDir,
   isBareModuleId,
-  magicExportsPlugin,
 } = require("../../rollup.utils");
 const { name: packageName, version } = require("./package.json");
 
@@ -34,6 +34,12 @@ module.exports = function rollup() {
       exports: "auto",
     },
     plugins: [
+      replace({
+        preventAssignment: true,
+        values: {
+          "import.meta": "null",
+        },
+      }),
       babel({
         babelHelpers: "bundled",
         exclude: /node_modules/,
@@ -47,7 +53,6 @@ module.exports = function rollup() {
           { src: `${sourceDir}/README.md`, dest: outputDir },
         ],
       }),
-      magicExportsPlugin({ packageName, version }),
       copyToPlaygrounds(),
     ],
   };

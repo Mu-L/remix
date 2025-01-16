@@ -1,6 +1,7 @@
 import * as path from "https://deno.land/std@0.128.0/path/mod.ts";
 
 import type {
+  SessionData,
   SessionIdStorageStrategy,
   SessionStorage,
 } from "@remix-run/server-runtime";
@@ -25,13 +26,13 @@ interface FileSessionStorageOptions {
  * The advantage of using this instead of cookie session storage is that
  * files may contain much more data than cookies.
  */
-export function createFileSessionStorage({
+export function createFileSessionStorage<Data = SessionData, FlashData = Data>({
   cookie,
   dir,
-}: FileSessionStorageOptions): SessionStorage {
+}: FileSessionStorageOptions): SessionStorage<Data, FlashData> {
   return createSessionStorage({
     cookie,
-    async createData(data, expires) {
+    createData: async (data, expires) => {
       const content = JSON.stringify({ data, expires });
 
       while (true) {
@@ -64,7 +65,7 @@ export function createFileSessionStorage({
         }
       }
     },
-    async readData(id) {
+    readData: async (id) => {
       try {
         const file = getFile(dir, id);
         const content = JSON.parse(await Deno.readTextFile(file));
@@ -86,13 +87,13 @@ export function createFileSessionStorage({
         return null;
       }
     },
-    async updateData(id, data, expires) {
+    updateData: async (id, data, expires) => {
       const content = JSON.stringify({ data, expires });
       const file = getFile(dir, id);
       await Deno.mkdir(path.dirname(file), { recursive: true }).catch(() => {});
       await Deno.writeTextFile(file, content);
     },
-    async deleteData(id) {
+    deleteData: async (id) => {
       try {
         await Deno.remove(getFile(dir, id));
       } catch (error) {
